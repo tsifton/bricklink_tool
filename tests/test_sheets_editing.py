@@ -59,10 +59,31 @@ class TestSheetsEditing(unittest.TestCase):
         with patch('sheets.get_or_create_worksheet', return_value=mock_ws):
             edits = read_orders_sheet_edits(mock_sheet)
             
-            # Check that user edits are captured
+            # Check that ALL fields are captured (new behavior)
             expected_edits = {
-                ("12345", ""): {"Shipping": "5.99", "Tracking No": "1Z123456789"},
-                ("12345", "3001"): {"Total Lots": "5"}
+                ("12345", ""): {
+                    "Order ID": "12345",
+                    "Seller": "TestSeller",
+                    "Order Date": "2024-01-01",
+                    "Shipping": "5.99",
+                    "Add Chrg 1": "",
+                    "Order Total": "25.00",
+                    "Tracking No": "1Z123456789",
+                    "Item Number": "",
+                    "Item Description": ""
+                },
+                ("12345", "3001"): {
+                    "Order ID": "12345",
+                    "Seller": "",
+                    "Order Date": "",
+                    "Shipping": "",
+                    "Add Chrg 1": "",
+                    "Order Total": "",
+                    "Tracking No": "",
+                    "Item Number": "3001",
+                    "Item Description": "Brick 2 x 4",
+                    "Total Lots": "5"
+                }
             }
             self.assertEqual(edits, expected_edits)
 

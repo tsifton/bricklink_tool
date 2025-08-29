@@ -87,14 +87,11 @@ def update_leftovers(sheet, inventory):
 def read_orders_sheet_edits(sheet):
     """
     Reads the current Orders worksheet to capture any user edits.
-    Returns a dictionary keyed by (Order ID, Item Number) with user-editable fields.
+    Returns a dictionary keyed by (Order ID, Item Number) with ALL fields.
     """
     try:
         ws = get_or_create_worksheet(sheet, "Orders")
         records = ws.get_all_records()
-        
-        # Define which fields are editable by users
-        editable_fields = ["Shipping", "Add Chrg 1", "Total Lots", "Total Items", "Tracking No"]
         
         edits = {}
         for record in records:
@@ -102,18 +99,15 @@ def read_orders_sheet_edits(sheet):
             order_id = record.get("Order ID", "")
             item_number = record.get("Item Number", "")
             
+            # Skip empty rows
+            if not order_id:
+                continue
+            
             # For order header rows (no Item Number), use just Order ID
             key = (order_id, item_number) if item_number else (order_id, "")
             
-            # Store user edits for editable fields (only if they have values)
-            user_edits = {}
-            for field in editable_fields:
-                value = record.get(field, "")
-                if value and str(value).strip():  # Only store non-empty values
-                    user_edits[field] = value
-            
-            if user_edits:  # Only store if there are actual edits
-                edits[key] = user_edits
+            # Store all fields for this row
+            edits[key] = record
                 
         return edits
     except Exception:
@@ -123,7 +117,7 @@ def read_orders_sheet_edits(sheet):
 def update_orders_sheet(sheet, order_rows):
     """
     Updates the 'Orders' worksheet with order_rows data.
-    Preserves user edits to editable fields and formats currency columns.
+    Preserves user edits to ALL fields and formats currency columns.
     """
     if not order_rows:
         return
@@ -154,9 +148,10 @@ def update_orders_sheet(sheet, order_rows):
         
         # Apply any user edits for this row
         if key in existing_edits:
-            user_edits = existing_edits[key]
-            for field, value in user_edits.items():
-                if field in headers:
+            user_record = existing_edits[key]
+            for field in headers:
+                value = user_record.get(field, '')
+                if value and str(value).strip():  # Only apply non-empty values
                     field_index = headers.index(field)
                     row_data[field_index] = value
         
@@ -179,3 +174,313 @@ def update_orders_sheet(sheet, order_rows):
         })
     except Exception:
         pass  # Ignore formatting errors
+
+
+def save_edits_to_files(sheet_edits, orders_dir):
+    """
+    Saves user edits from the Google Sheet back to the source XML and CSV files.
+    
+    Args:
+        sheet_edits: Dict keyed by (Order ID, Item Number) with edited data
+        orders_dir: Directory containing the source order files
+    """
+    import os
+    import xml.etree.ElementTree as ET
+    import csv
+    from config import ORDERS_DIR
+    
+    if not sheet_edits:
+        return
+    
+    # Update XML files
+    _update_xml_files(sheet_edits, orders_dir or ORDERS_DIR)
+    
+    # Update CSV files  
+    _update_csv_files(sheet_edits, orders_dir or ORDERS_DIR)
+
+
+def _update_xml_files(sheet_edits, orders_dir):
+    """Update XML files with edited data from Google Sheets."""
+    import os
+    import xml.etree.ElementTree as ET
+    
+    # Process the main orders.xml file if it exists
+    xml_file = os.path.join(orders_dir, 'orders.xml')
+    if not os.path.exists(xml_file):
+        return
+    
+    try:
+        tree = ET.parse(xml_file)
+        root = tree.getroot()
+        
+        for order in root.findall("ORDER"):
+            order_id = order.findtext("ORDERID", "").strip()
+            
+            # Check if this order has edits in the sheet
+            order_key = (order_id, "")
+            if order_key in sheet_edits:
+                order_edits = sheet_edits[order_key]
+                
+                # Update order-level fields that can be edited
+                if order_edits.get("Seller"):
+                    seller_elem = order.find("SELLER")
+                    if seller_elem is None:
+                        seller_elem = ET.SubElement(order, "SELLER")
+                    seller_elem.text = str(order_edits["Seller"])
+                
+                if order_edits.get("Order Date"):
+                    date_elem = order.find("ORDERDATE")
+                    if date_elem is None:
+                        date_elem = ET.SubElement(order, "ORDERDATE")
+                    date_elem.text = str(order_edits["Order Date"])
+                
+                if order_edits.get("Order Total"):
+                    total_elem = order.find("ORDERTOTAL")
+                    if total_elem is None:
+                        total_elem = ET.SubElement(order, "ORDERTOTAL")
+                    total_elem.text = str(order_edits["Order Total"])
+                
+                if order_edits.get("Base Grand Total"):
+                    base_total_elem = order.find("BASEGRANDTOTAL")
+                    if base_total_elem is None:
+                        base_total_elem = ET.SubElement(order, "BASEGRANDTOTAL")
+                    base_total_elem.text = str(order_edits["Base Grand Total"])
+            
+            # Update item-level fields
+            for item in order.findall("ITEM"):
+                item_id = item.findtext("ITEMID", "").strip()
+                item_key = (order_id, item_id)
+                
+                if item_key in sheet_edits:
+                    item_edits = sheet_edits[item_key]
+                    
+                    # Update item fields that can be edited
+                    if item_edits.get("Condition"):
+                        condition_elem = item.find("CONDITION")
+                        if condition_elem is None:
+                            condition_elem = ET.SubElement(item, "CONDITION")
+                        condition_elem.text = str(item_edits["Condition"])
+                    
+                    if item_edits.get("Qty"):
+                        qty_elem = item.find("QTY")
+                        if qty_elem is None:
+                            qty_elem = ET.SubElement(item, "QTY")
+                        qty_elem.text = str(item_edits["Qty"])
+                    
+                    if item_edits.get("Each"):
+                        price_elem = item.find("PRICE")
+                        if price_elem is None:
+                            price_elem = ET.SubElement(item, "PRICE")
+                        price_elem.text = str(item_edits["Each"])
+                    
+                    if item_edits.get("Item Description"):
+                        desc_elem = item.find("DESCRIPTION")
+                        if desc_elem is None:
+                            desc_elem = ET.SubElement(item, "DESCRIPTION")
+                        desc_elem.text = str(item_edits["Item Description"])
+        
+        # Save the updated XML file
+        ET.indent(tree, space="  ", level=0)
+        tree.write(xml_file, encoding='utf-8', xml_declaration=True)
+        print(f"Updated XML file: {xml_file}")
+        
+    except ET.ParseError as e:
+        print(f"Warning: Could not parse/update XML file {xml_file}: {e}")
+
+
+def _update_csv_files(sheet_edits, orders_dir):
+    """Update CSV files with edited data from Google Sheets."""
+    import os
+    import csv
+    
+    # Process the main orders.csv file if it exists
+    csv_file = os.path.join(orders_dir, 'orders.csv')
+    if not os.path.exists(csv_file):
+        return
+    
+    try:
+        # Read existing CSV data
+        rows = []
+        headers = []
+        
+        with open(csv_file, 'r', newline='', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            headers = reader.fieldnames
+            rows = list(reader)
+        
+        # Update rows with sheet edits
+        updated_rows = []
+        for row in rows:
+            order_id = row.get('Order Number', '').strip()
+            item_number = row.get('Item Number', '').strip()
+            
+            # Create key to match sheet edits
+            key = (order_id, item_number) if item_number else (order_id, "")
+            
+            if key in sheet_edits:
+                sheet_row = sheet_edits[key]
+                
+                # Map Google Sheet column names to CSV column names
+                field_mapping = {
+                    'Order ID': 'Order Number',
+                    'Item Number': 'Item Number', 
+                    'Item Description': 'Item Description',
+                    'Color': 'Color',  # May need color ID mapping
+                    'Qty': 'Qty',
+                    'Each': 'Each',
+                    'Total': 'Total',
+                    'Condition': 'Condition'
+                }
+                
+                # Update row with edited values
+                for sheet_field, csv_field in field_mapping.items():
+                    if csv_field in headers and sheet_row.get(sheet_field):
+                        row[csv_field] = str(sheet_row[sheet_field])
+            
+            updated_rows.append(row)
+        
+        # Write updated CSV file
+        with open(csv_file, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=headers)
+            writer.writeheader()
+            writer.writerows(updated_rows)
+        
+        print(f"Updated CSV file: {csv_file}")
+        
+    except Exception as e:
+        print(f"Warning: Could not update CSV file {csv_file}: {e}")
+
+
+def detect_deleted_orders(original_order_rows, sheet_edits):
+    """
+    Detects which orders/items have been deleted from the Google Sheet.
+    
+    Args:
+        original_order_rows: Original order data from XML/CSV files
+        sheet_edits: Current data from Google Sheet
+    
+    Returns:
+        List of (order_id, item_number) tuples that were deleted
+    """
+    # Create set of keys from original data
+    original_keys = set()
+    for row in original_order_rows:
+        order_id = row.get("Order ID", "")
+        item_number = row.get("Item Number", "")
+        key = (order_id, item_number) if item_number else (order_id, "")
+        original_keys.add(key)
+    
+    # Create set of keys from sheet data
+    sheet_keys = set(sheet_edits.keys())
+    
+    # Find deleted keys (in original but not in sheet)
+    deleted_keys = original_keys - sheet_keys
+    return list(deleted_keys)
+
+
+def remove_deleted_orders_from_files(deleted_keys, orders_dir):
+    """
+    Removes deleted orders/items from the source XML and CSV files.
+    
+    Args:
+        deleted_keys: List of (order_id, item_number) tuples to delete
+        orders_dir: Directory containing the source order files
+    """
+    if not deleted_keys:
+        return
+    
+    from config import ORDERS_DIR
+    _remove_from_xml_files(deleted_keys, orders_dir or ORDERS_DIR)
+    _remove_from_csv_files(deleted_keys, orders_dir or ORDERS_DIR)
+
+
+def _remove_from_xml_files(deleted_keys, orders_dir):
+    """Remove deleted orders/items from XML files."""
+    import os
+    import xml.etree.ElementTree as ET
+    
+    xml_file = os.path.join(orders_dir, 'orders.xml')
+    if not os.path.exists(xml_file):
+        return
+    
+    try:
+        tree = ET.parse(xml_file)
+        root = tree.getroot()
+        
+        # Group deleted keys by order_id
+        orders_to_delete = set()
+        items_to_delete = {}  # order_id -> [item_ids]
+        
+        for order_id, item_number in deleted_keys:
+            if not item_number:  # Entire order should be deleted
+                orders_to_delete.add(order_id)
+            else:  # Specific item should be deleted
+                if order_id not in items_to_delete:
+                    items_to_delete[order_id] = []
+                items_to_delete[order_id].append(item_number)
+        
+        # Remove entire orders
+        for order in root.findall("ORDER"):
+            order_id = order.findtext("ORDERID", "").strip()
+            if order_id in orders_to_delete:
+                root.remove(order)
+                continue
+            
+            # Remove specific items from orders
+            if order_id in items_to_delete:
+                for item in order.findall("ITEM"):
+                    item_id = item.findtext("ITEMID", "").strip()
+                    if item_id in items_to_delete[order_id]:
+                        order.remove(item)
+        
+        # Save updated XML file
+        ET.indent(tree, space="  ", level=0)
+        tree.write(xml_file, encoding='utf-8', xml_declaration=True)
+        print(f"Removed {len(deleted_keys)} deleted entries from XML file")
+        
+    except ET.ParseError as e:
+        print(f"Warning: Could not update XML file {xml_file}: {e}")
+
+
+def _remove_from_csv_files(deleted_keys, orders_dir):
+    """Remove deleted orders/items from CSV files."""
+    import os
+    import csv
+    
+    csv_file = os.path.join(orders_dir, 'orders.csv')
+    if not os.path.exists(csv_file):
+        return
+    
+    try:
+        # Read existing CSV data
+        rows = []
+        headers = []
+        
+        with open(csv_file, 'r', newline='', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            headers = reader.fieldnames
+            rows = list(reader)
+        
+        # Filter out deleted rows
+        filtered_rows = []
+        for row in rows:
+            order_id = row.get('Order Number', '').strip()
+            item_number = row.get('Item Number', '').strip()
+            
+            # Create key to match deleted keys
+            key = (order_id, item_number) if item_number else (order_id, "")
+            
+            # Keep row if it's not in deleted keys
+            if key not in deleted_keys:
+                filtered_rows.append(row)
+        
+        # Write filtered CSV file
+        with open(csv_file, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=headers)
+            writer.writeheader()
+            writer.writerows(filtered_rows)
+        
+        print(f"Removed {len(rows) - len(filtered_rows)} deleted entries from CSV file")
+        
+    except Exception as e:
+        print(f"Warning: Could not update CSV file {csv_file}: {e}")
