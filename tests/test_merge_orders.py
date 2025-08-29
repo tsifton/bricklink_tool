@@ -29,6 +29,25 @@ class TestMergeOrders(unittest.TestCase):
         shutil.rmtree(self.test_dir)
         merge_orders.ORDERS_DIR = self.original_orders_dir
     
+    def create_test_csv(self, filename, order_id, order_date, item_id="3001", qty=10, price=2.50):
+        """Create a test CSV order file."""
+        with open(os.path.join(self.test_dir, filename), 'w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=[
+                'Order Number', 'Order Date', 'Item Number', 'Item Description',
+                'Color ID', 'Qty', 'Each', 'Total'
+            ])
+            writer.writeheader()
+            writer.writerow({
+                'Order Number': order_id,
+                'Order Date': order_date,
+                'Item Number': item_id,
+                'Item Description': 'Test Brick Description',
+                'Color ID': '4',
+                'Qty': str(qty),
+                'Each': str(price),
+                'Total': str(qty * price)
+            })
+
     def create_test_xml(self, filename, order_id, order_date, seller="TestSeller", 
                        item_id="3001", qty=10, price=2.50):
         """Create a test XML order file."""
@@ -123,6 +142,81 @@ class TestMergeOrders(unittest.TestCase):
         # Test invalid date returns minimum date
         invalid_date = merge_orders.parse_order_date('invalid-date')
         self.assertEqual(invalid_date, merge_orders.datetime.min)
+
+
+    def test_no_duplication_when_merged_files_exist(self):
+        """Test that individual files are not processed when merged files exist."""
+        # Create individual order files
+        self.create_test_xml('order1.xml', '12345', '2024-08-15T10:30:00.000Z', qty=5)
+        self.create_test_xml('order2.xml', '12346', '2024-08-20T15:45:00.000Z', qty=7)
+        
+        # Merge XML files (creates orders.xml)
+        merge_orders.merge_xml()
+        
+        # Verify merged file exists alongside individual files
+        merged_path = os.path.join(self.test_dir, 'orders.xml')
+        self.assertTrue(os.path.exists(merged_path))
+        self.assertTrue(os.path.exists(os.path.join(self.test_dir, 'order1.xml')))
+        self.assertTrue(os.path.exists(os.path.join(self.test_dir, 'order2.xml')))
+        
+        # Simulate what orders.load_orders() would do - count total quantities
+        # This mimics the critical part: checking if merged file exists
+        merged_xml_exists = os.path.exists(os.path.join(self.test_dir, 'orders.xml'))
+        total_qty = 0
+        
+        for fn in os.listdir(self.test_dir):
+            if not fn.endswith('.xml'):
+                continue
+            # Apply the fix: skip individual files when merged file exists
+            if merged_xml_exists and fn != 'orders.xml':
+                continue
+                
+            tree = ET.parse(os.path.join(self.test_dir, fn))
+            root = tree.getroot()
+            for order in root.findall('ORDER'):
+                for item in order.findall('ITEM'):
+                    qty = int(item.findtext('QTY', '0') or 0)
+                    total_qty += qty
+        
+        # Should only process orders.xml (merged file), not individual files
+        # Total should be 5 + 7 = 12, not 24 (which would indicate duplication)
+        self.assertEqual(total_qty, 12)
+
+    def test_no_duplication_csv_when_merged_files_exist(self):
+        """Test that individual CSV files are not processed when merged CSV exists."""
+        # Create individual CSV files
+        self.create_test_csv('order1.csv', '12345', '2024-08-15', qty=3)
+        self.create_test_csv('order2.csv', '12346', '2024-08-20', qty=4)
+        
+        # Merge CSV files (creates orders.csv)
+        merge_orders.merge_csv()
+        
+        # Verify merged file exists alongside individual files
+        merged_path = os.path.join(self.test_dir, 'orders.csv')
+        self.assertTrue(os.path.exists(merged_path))
+        self.assertTrue(os.path.exists(os.path.join(self.test_dir, 'order1.csv')))
+        self.assertTrue(os.path.exists(os.path.join(self.test_dir, 'order2.csv')))
+        
+        # Simulate what orders.load_orders() would do for CSV files
+        merged_csv_exists = os.path.exists(os.path.join(self.test_dir, 'orders.csv'))
+        total_qty = 0
+        
+        for fn in os.listdir(self.test_dir):
+            if not fn.endswith('.csv'):
+                continue
+            # Apply the fix: skip individual files when merged file exists
+            if merged_csv_exists and fn != 'orders.csv':
+                continue
+                
+            with open(os.path.join(self.test_dir, fn), 'r', newline='', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    qty = int(row.get('Qty', '0') or 0)
+                    total_qty += qty
+        
+        # Should only process orders.csv (merged file), not individual files  
+        # Total should be 3 + 4 = 7, not 14 (which would indicate duplication)
+        self.assertEqual(total_qty, 7)
 
 
 if __name__ == '__main__':

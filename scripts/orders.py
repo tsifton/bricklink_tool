@@ -24,20 +24,32 @@ def load_orders(return_rows=False):
     all_rows = []  # List of rows for Google Sheets
     csv_descriptions = {}  # Maps item_id to description from CSV
 
+    # Check if merged files exist - if so, use only merged files to avoid duplication
+    merged_csv_exists = os.path.exists(os.path.join(ORDERS_DIR, 'orders.csv'))
+    merged_xml_exists = os.path.exists(os.path.join(ORDERS_DIR, 'orders.xml'))
+
     # --- Load CSV descriptions (full BrickLink descriptions) ---
     for fn in os.listdir(ORDERS_DIR):
-        if fn.endswith(".csv"):
-            with open(os.path.join(ORDERS_DIR, fn), newline='', encoding='utf-8') as f:
-                for row in csv.DictReader(f):
-                    iid = row['Item Number'].strip()
-                    desc = row.get('Item Description', '').strip()
-                    # Only use the first description found for each item_id
-                    if iid and desc and iid not in csv_descriptions:
-                        csv_descriptions[iid] = desc
+        if not fn.endswith(".csv"):
+            continue
+        # Skip individual CSV files if merged CSV exists
+        if merged_csv_exists and fn != 'orders.csv':
+            continue
+        
+        with open(os.path.join(ORDERS_DIR, fn), newline='', encoding='utf-8') as f:
+            for row in csv.DictReader(f):
+                iid = row['Item Number'].strip()
+                desc = row.get('Item Description', '').strip()
+                # Only use the first description found for each item_id
+                if iid and desc and iid not in csv_descriptions:
+                    csv_descriptions[iid] = desc
 
     # --- Load XML orders ---
     for fn in os.listdir(ORDERS_DIR):
         if not fn.endswith(".xml"):
+            continue
+        # Skip individual XML files if merged XML exists
+        if merged_xml_exists and fn != 'orders.xml':
             continue
         tree = ET.parse(os.path.join(ORDERS_DIR, fn))
         root = tree.getroot()
