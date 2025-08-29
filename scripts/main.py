@@ -38,7 +38,7 @@ def main():
     inventory, order_rows = load_orders(return_rows=True)
     
     # Detect deleted orders/items and remove from source files
-    #deleted_keys = detect_deleted_orders(order_rows, sheet_edits)
+    deleted_keys = detect_deleted_orders(order_rows, sheet_edits)
     if deleted_keys:
         remove_deleted_orders_from_files(deleted_keys, ORDERS_DIR)
         print(f"Removed {len(deleted_keys)} deleted entries from source files")
