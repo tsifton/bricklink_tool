@@ -6,7 +6,11 @@ from sheets import (
     update_summary,
     update_inventory_sheet,
     update_leftovers,
-    update_orders_sheet
+    update_orders_sheet,
+    read_orders_sheet_edits,
+    save_edits_to_files,
+    detect_deleted_orders,
+    remove_deleted_orders_from_files
 )
 import merge_orders
 
@@ -15,18 +19,40 @@ def main():
     Main entry point for the Minifig Profit Tool.
     Loads data, computes buildable quantities, and updates Google Sheets.
     """
+    from config import ORDERS_DIR
+    
     # --- Run merge_orders before anything else ---
     merge_orders.merge_xml()
     merge_orders.merge_csv()
 
     # Load or create the main Google Sheet
     sheet = load_google_sheet()
+    
+    # Read current edits from Google Sheet before processing new data
+    sheet_edits = read_orders_sheet_edits(sheet)
+    
     # Retrieve configuration values (shipping fee and materials cost) from the Config worksheet
     shipping_fee = get_config_value(sheet, "Shipping Fee", "B1")
     materials_cost = get_config_value(sheet, "Materials Cost", "B2")
 
     # Load inventory and order rows from BrickLink order files
     inventory, order_rows = load_orders(return_rows=True)
+    
+    # Detect deleted orders/items and remove from source files
+    deleted_keys = detect_deleted_orders(order_rows, sheet_edits)
+    if deleted_keys:
+        remove_deleted_orders_from_files(deleted_keys, ORDERS_DIR)
+        print(f"Removed {len(deleted_keys)} deleted entries from source files")
+        # Reload data after deletions
+        inventory, order_rows = load_orders(return_rows=True)
+    
+    # Save any edits from Google Sheet back to source files
+    if sheet_edits:
+        save_edits_to_files(sheet_edits, ORDERS_DIR)
+        print("Saved edits back to source files")
+        # Reload data after edits to ensure consistency
+        inventory, order_rows = load_orders(return_rows=True)
+    
     # Update the Inventory worksheet with the current inventory
     update_inventory_sheet(sheet, inventory)
     # Parse all wanted lists from XML files
