@@ -21,14 +21,16 @@ def main():
     """
     from config import ORDERS_DIR
     
-    merge_orders.merge_xml()
-    merge_orders.merge_csv()
-
     # Load or create the main Google Sheet
     sheet = load_google_sheet()
     
-    # Read current edits from Google Sheet before processing new data
+    # Read current edits from Google Sheet BEFORE processing new data
+    # This captures user edits before merging new orders
     sheet_edits = read_orders_sheet_edits(sheet)
+    
+    # Now merge order files to add any new orders
+    merge_orders.merge_xml()
+    merge_orders.merge_csv()
     
     # Retrieve configuration values (shipping fee and materials cost) from the Config worksheet
     shipping_fee = get_config_value(sheet, "Shipping Fee", "B1")
