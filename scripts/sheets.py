@@ -84,13 +84,53 @@ def update_leftovers(sheet, inventory):
     if rows:
         ws.update(values=rows, range_name="A2")
 
+def read_orders_sheet_edits(sheet):
+    """
+    Reads the current Orders worksheet to capture any user edits.
+    Returns a dictionary keyed by (Order ID, Item Number) with user-editable fields.
+    """
+    try:
+        ws = get_or_create_worksheet(sheet, "Orders")
+        records = ws.get_all_records()
+        
+        # Define which fields are editable by users
+        editable_fields = ["Shipping", "Add Chrg 1", "Total Lots", "Total Items", "Tracking No"]
+        
+        edits = {}
+        for record in records:
+            # Create a unique key for each row (Order ID + Item Number for item rows)
+            order_id = record.get("Order ID", "")
+            item_number = record.get("Item Number", "")
+            
+            # For order header rows (no Item Number), use just Order ID
+            key = (order_id, item_number) if item_number else (order_id, "")
+            
+            # Store user edits for editable fields (only if they have values)
+            user_edits = {}
+            for field in editable_fields:
+                value = record.get(field, "")
+                if value and str(value).strip():  # Only store non-empty values
+                    user_edits[field] = value
+            
+            if user_edits:  # Only store if there are actual edits
+                edits[key] = user_edits
+                
+        return edits
+    except Exception:
+        # If there's any error reading the sheet, return empty dict
+        return {}
+
 def update_orders_sheet(sheet, order_rows):
     """
     Updates the 'Orders' worksheet with order_rows data.
-    Formats currency columns for 'Each' and 'Total'.
+    Preserves user edits to editable fields and formats currency columns.
     """
     if not order_rows:
         return
+    
+    # Read existing user edits before clearing the sheet
+    existing_edits = read_orders_sheet_edits(sheet)
+    
     ws = get_or_create_worksheet(sheet, "Orders")
     ws.clear()
     # Define header columns
@@ -100,8 +140,29 @@ def update_orders_sheet(sheet, order_rows):
         "Tracking No", "Condition", "Item Number", "Item Description",
         "Color", "Qty", "Each", "Total"
     ]
-    # Prepare order data rows
-    values = [headers] + [[row.get(col, '') for col in headers] for row in order_rows]
+    
+    # Prepare order data rows and apply user edits
+    data_rows = []
+    for row in order_rows:
+        # Create the base row from the data
+        row_data = [row.get(col, '') for col in headers]
+        
+        # Create key to look up user edits
+        order_id = row.get("Order ID", "")
+        item_number = row.get("Item Number", "")
+        key = (order_id, item_number) if item_number else (order_id, "")
+        
+        # Apply any user edits for this row
+        if key in existing_edits:
+            user_edits = existing_edits[key]
+            for field, value in user_edits.items():
+                if field in headers:
+                    field_index = headers.index(field)
+                    row_data[field_index] = value
+        
+        data_rows.append(row_data)
+    
+    values = [headers] + data_rows
     ws.update(values=values, range_name="A1")
     try:
         # Format 'Each' and 'Total' columns as currency
