@@ -377,6 +377,95 @@ def _update_csv_files(sheet_edits, orders_dir):
         print(f"Warning: Could not update CSV file {csv_file}: {e}")
 
 
+def detect_changes_before_merge(sheet_edits, orders_dir=None):
+    """
+    Detects changes between current order files and the order sheet data
+    before merging new orders.
+    
+    Args:
+        sheet_edits: Current data from Google Sheet
+        orders_dir: Directory containing order files (optional)
+    
+    Returns:
+        Dict with 'edits', 'additions', 'deletions' keys containing change information
+    """
+    from orders import load_orders
+    from config import ORDERS_DIR
+    
+    if not sheet_edits:
+        return {'edits': [], 'additions': [], 'deletions': []}
+    
+    # Load current order data (before any merging happens)
+    _, current_order_rows = load_orders(return_rows=True)
+    
+    # Create dict of current order data keyed by (order_id, item_number)
+    current_data = {}
+    for row in current_order_rows:
+        order_id = row.get("Order ID", "")
+        item_number = row.get("Item Number", "")
+        key = (order_id, item_number) if item_number else (order_id, "")
+        current_data[key] = row
+    
+    # Analyze changes
+    changes = {'edits': [], 'additions': [], 'deletions': []}
+    
+    # Find edits and additions (items in sheet)
+    for sheet_key, sheet_row in sheet_edits.items():
+        if sheet_key in current_data:
+            # This is a potential edit - compare values
+            current_row = current_data[sheet_key]
+            edits_for_row = {}
+            
+            # Compare all relevant fields
+            comparable_fields = [
+                "Seller", "Order Date", "Shipping", "Add Chrg 1", 
+                "Order Total", "Base Grand Total", "Total Lots", "Total Items",
+                "Tracking No", "Condition", "Item Description", "Color", 
+                "Qty", "Each", "Total"
+            ]
+            
+            for field in comparable_fields:
+                sheet_value = str(sheet_row.get(field, "")).strip()
+                current_value = str(current_row.get(field, "")).strip()
+                
+                if sheet_value != current_value and sheet_value:
+                    edits_for_row[field] = {
+                        'from': current_value,
+                        'to': sheet_value
+                    }
+            
+            if edits_for_row:
+                changes['edits'].append({
+                    'key': sheet_key,
+                    'order_id': sheet_key[0],
+                    'item_number': sheet_key[1],
+                    'changes': edits_for_row
+                })
+        else:
+            # This is an addition (in sheet but not in current data)
+            changes['additions'].append({
+                'key': sheet_key,
+                'order_id': sheet_key[0], 
+                'item_number': sheet_key[1],
+                'data': sheet_row
+            })
+    
+    # Find deletions (items in current data but not in sheet)
+    current_keys = set(current_data.keys())
+    sheet_keys = set(sheet_edits.keys())
+    deleted_keys = current_keys - sheet_keys
+    
+    for deleted_key in deleted_keys:
+        changes['deletions'].append({
+            'key': deleted_key,
+            'order_id': deleted_key[0],
+            'item_number': deleted_key[1],
+            'data': current_data[deleted_key]
+        })
+    
+    return changes
+
+
 def detect_deleted_orders(original_order_rows, sheet_edits):
     """
     Detects which orders/items have been deleted from the Google Sheet.
@@ -384,7 +473,7 @@ def detect_deleted_orders(original_order_rows, sheet_edits):
     Args:
         original_order_rows: Original order data from XML/CSV files
         sheet_edits: Current data from Google Sheet
-    
+
     Returns:
         List of (order_id, item_number) tuples that were deleted
     """

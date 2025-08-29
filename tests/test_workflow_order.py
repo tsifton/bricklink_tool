@@ -28,6 +28,7 @@ class TestWorkflowOrder(unittest.TestCase):
         operations = {
             'load_google_sheet': main_func.find('load_google_sheet()'),
             'read_orders_sheet_edits': main_func.find('read_orders_sheet_edits('),
+            'detect_changes_before_merge': main_func.find('detect_changes_before_merge('),
             'merge_xml': main_func.find('merge_orders.merge_xml()'),
             'merge_csv': main_func.find('merge_orders.merge_csv()')
         }
@@ -40,8 +41,11 @@ class TestWorkflowOrder(unittest.TestCase):
         self.assertLess(operations['load_google_sheet'], operations['read_orders_sheet_edits'],
                        "load_google_sheet() should come before read_orders_sheet_edits()")
         
-        self.assertLess(operations['read_orders_sheet_edits'], operations['merge_xml'],
-                       "read_orders_sheet_edits() should come before merge_orders.merge_xml()")
+        self.assertLess(operations['read_orders_sheet_edits'], operations['detect_changes_before_merge'],
+                       "read_orders_sheet_edits() should come before detect_changes_before_merge()")
+        
+        self.assertLess(operations['detect_changes_before_merge'], operations['merge_xml'],
+                       "detect_changes_before_merge() should come before merge_orders.merge_xml()")
         
         self.assertLess(operations['merge_xml'], operations['merge_csv'],
                        "merge_orders.merge_xml() should come before merge_orders.merge_csv()")
@@ -49,8 +53,9 @@ class TestWorkflowOrder(unittest.TestCase):
         print("✓ Workflow order is correct:")
         print("  1. load_google_sheet()")
         print("  2. read_orders_sheet_edits()")
-        print("  3. merge_orders.merge_xml()")
-        print("  4. merge_orders.merge_csv()")
+        print("  3. detect_changes_before_merge()")
+        print("  4. merge_orders.merge_xml()")
+        print("  5. merge_orders.merge_csv()")
 
 
 if __name__ == '__main__':
