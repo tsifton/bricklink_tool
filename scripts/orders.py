@@ -103,10 +103,16 @@ def load_orders(return_rows=False):
                 new_qty = prev['qty'] + part_row["Qty"]
                 new_total_cost = prev['total_cost'] + total_with_fees
                 unit_cost = (new_total_cost / new_qty) if new_qty else 0
-                # Clean description for inventory (remove seller note if present)
-                clean_desc = csv_descriptions.get(part_row["Item Number"], "")
-                if seller_desc and clean_desc.endswith(seller_desc):
-                    clean_desc = clean_desc[: -len(seller_desc)].rstrip(" -")
+                # Clean description for inventory (use CSV if available, fallback to seller description)
+                csv_desc = csv_descriptions.get(part_row["Item Number"], "")
+                if csv_desc:
+                    # Use CSV description and clean it by removing seller note if present
+                    clean_desc = csv_desc
+                    if seller_desc and clean_desc.endswith(seller_desc):
+                        clean_desc = clean_desc[: -len(seller_desc)].rstrip(" -")
+                else:
+                    # No CSV description available, use seller description as fallback
+                    clean_desc = seller_desc
                 # Update inventory with new values
                 inventory[key].update({
                     'qty': new_qty,
