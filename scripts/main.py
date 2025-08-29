@@ -10,7 +10,8 @@ from sheets import (
     read_orders_sheet_edits,
     save_edits_to_files,
     detect_deleted_orders,
-    remove_deleted_orders_from_files
+    remove_deleted_orders_from_files,
+    detect_changes_before_merge
 )
 import merge_orders
 
@@ -27,6 +28,16 @@ def main():
     # Read current edits from Google Sheet BEFORE processing new data
     # This captures user edits before merging new orders
     sheet_edits = read_orders_sheet_edits(sheet)
+    
+    # Detect changes between current order files and order sheet before merging
+    if sheet_edits:
+        changes = detect_changes_before_merge(sheet_edits, ORDERS_DIR)
+        total_changes = len(changes['edits']) + len(changes['additions']) + len(changes['deletions'])
+        if total_changes > 0:
+            print(f"Detected changes before merge: {len(changes['edits'])} edits, "
+                  f"{len(changes['additions'])} additions, {len(changes['deletions'])} deletions")
+        else:
+            print("No changes detected between order files and sheet")
     
     # Now merge order files to add any new orders
     merge_orders.merge_xml()
