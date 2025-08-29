@@ -2,3 +2,8 @@ wanted_lists/
 orders/
 scripts/credentials.json
 bricklink_tool.code-workspace
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
