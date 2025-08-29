@@ -88,26 +88,46 @@ def read_orders_sheet_edits(sheet):
     """
     Reads the current Orders worksheet to capture any user edits.
     Returns a dictionary keyed by (Order ID, Item Number) with ALL fields.
+    
+    Handles the order structure where only the first row of each order 
+    contains the Order ID, and subsequent item rows have empty Order ID
+    until the next order starts.
     """
     try:
         ws = get_or_create_worksheet(sheet, "Orders")
         records = ws.get_all_records()
         
         edits = {}
+        current_order_id = ""
+        
         for record in records:
-            # Create a unique key for each row (Order ID + Item Number for item rows)
-            order_id = record.get("Order ID", "")
+            # Get the Order ID from this row
+            row_order_id = record.get("Order ID", "")
             item_number = record.get("Item Number", "")
             
-            # Skip empty rows
+            # If this row has an Order ID, update our current order context
+            if row_order_id:
+                current_order_id = row_order_id
+                order_id = row_order_id
+            else:
+                # This row doesn't have an Order ID, so it belongs to the current order
+                order_id = current_order_id
+            
+            # Skip rows that don't belong to any order
             if not order_id:
                 continue
             
             # For order header rows (no Item Number), use just Order ID
+            # For item rows, use Order ID + Item Number
             key = (order_id, item_number) if item_number else (order_id, "")
             
-            # Store all fields for this row
-            edits[key] = record
+            # Store all fields for this row, but ensure Order ID is set correctly
+            # for item rows that had empty Order ID in the sheet
+            record_copy = record.copy()
+            if not row_order_id and order_id:
+                record_copy["Order ID"] = order_id
+            
+            edits[key] = record_copy
                 
         return edits
     except Exception:
@@ -141,9 +161,15 @@ def update_orders_sheet(sheet, order_rows):
         # Create the base row from the data
         row_data = [row.get(col, '') for col in headers]
         
-        # Create key to look up user edits
-        order_id = row.get("Order ID", "")
+        # For visual clarity in the sheet, clear Order ID for item rows
+        # (item rows have Item Number, order header rows don't)
         item_number = row.get("Item Number", "")
+        if item_number:  # This is an item row
+            order_id_index = headers.index("Order ID")
+            row_data[order_id_index] = ""  # Clear Order ID for display
+        
+        # Create key to look up user edits (using original Order ID from data)
+        order_id = row.get("Order ID", "")
         key = (order_id, item_number) if item_number else (order_id, "")
         
         # Apply any user edits for this row

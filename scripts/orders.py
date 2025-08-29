@@ -90,6 +90,7 @@ def load_orders(return_rows=False):
                 # Use CSV description for Google Sheets (orders tab)
                 csv_desc = csv_descriptions.get(item_id, "")
                 part_row = {
+                    "Order ID": order_id,  # Include Order ID for proper key generation
                     "Item Number": item_id,
                     "Item Description": csv_desc,
                     "Color": color_name or item_type,

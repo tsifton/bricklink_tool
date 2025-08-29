@@ -207,6 +207,71 @@ class TestSheetsEditing(unittest.TestCase):
             # Verify the function completes without error
             mock_ws.update.assert_called_once()
 
+    def test_read_orders_sheet_edits_handles_order_structure(self):
+        """Test reading edits from sheet with proper order structure (empty Order ID for item rows)."""
+        mock_sheet = Mock()
+        mock_ws = Mock()
+        
+        # Mock sheet data mimicking the real structure where item rows have empty Order IDs
+        mock_ws.get_all_records.return_value = [
+            {
+                "Order ID": "12345",  # Order header has Order ID
+                "Seller": "TestSeller",
+                "Order Date": "2024-01-01",
+                "Shipping": "5.99",
+                "Tracking No": "",
+                "Item Number": "",  # No item number for order header
+                "Item Description": ""
+            },
+            {
+                "Order ID": "",  # Item row has empty Order ID (as shown in sheet)
+                "Seller": "",
+                "Order Date": "",
+                "Shipping": "",
+                "Tracking No": "",
+                "Item Number": "3001",  # Has item number
+                "Item Description": "Brick 2 x 4",
+                "Condition": "N",
+                "Qty": "10",
+                "Each": "1.25"
+            },
+            {
+                "Order ID": "",  # Another item row with empty Order ID
+                "Seller": "",
+                "Order Date": "",
+                "Shipping": "",
+                "Tracking No": "",
+                "Item Number": "3002",
+                "Item Description": "Brick 2 x 2",
+                "Condition": "U",
+                "Qty": "5",
+                "Each": "2.00"
+            }
+        ]
+        
+        with patch('sheets.get_or_create_worksheet', return_value=mock_ws):
+            edits = read_orders_sheet_edits(mock_sheet)
+        
+        # Should have correct keys with reconstructed Order IDs
+        expected_keys = {
+            ("12345", ""),      # Order header
+            ("12345", "3001"),  # First item (Order ID reconstructed)
+            ("12345", "3002")   # Second item (Order ID reconstructed)
+        }
+        actual_keys = set(edits.keys())
+        
+        self.assertEqual(actual_keys, expected_keys)
+        
+        # Verify that Order IDs were correctly reconstructed in the records
+        self.assertEqual(edits[("12345", "")]["Order ID"], "12345")
+        self.assertEqual(edits[("12345", "3001")]["Order ID"], "12345")
+        self.assertEqual(edits[("12345", "3002")]["Order ID"], "12345")
+        
+        # Verify other fields are preserved
+        self.assertEqual(edits[("12345", "")]["Shipping"], "5.99")
+        self.assertEqual(edits[("12345", "3001")]["Condition"], "N")
+        self.assertEqual(edits[("12345", "3002")]["Condition"], "U")
+
 
 if __name__ == '__main__':
     unittest.main()
