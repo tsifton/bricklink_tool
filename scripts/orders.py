@@ -6,6 +6,7 @@ from colors import get_color_name
 from config import ORDERS_DIR
 from dataclasses import dataclass, field
 from typing import List, Dict, Tuple, Optional
+import re
 
 
 @dataclass
@@ -19,6 +20,7 @@ class OrderItem:
     description: str = ""
     unit_cost: float = 0.0  # per-line unit cost incl. proportional fees
     lot_id: str = ""        # CSV Inv ID; used to match XML LOTID
+    clean_description: str = ""  # CSV description with seller note suffix removed
 
 
 @dataclass
@@ -127,14 +129,24 @@ def _map_item_type(label: str) -> str:
     return lab[:1].upper() or "P"
 
 
-def _build_xml_color_index() -> Dict[Tuple[str, str], int]:
+def _normalize_spaces(text: str) -> str:
     """
-    Build an index mapping (ORDERID, LOTID) -> COLOR from XML files.
-    Only parses minimal fields needed.
+    Collapse consecutive whitespace characters into single spaces and trim ends.
     """
-    idx: Dict[Tuple[str, str], int] = {}
+    return re.sub(r"\s+", " ", (text or "").strip())
+
+
+def _build_xml_indexes() -> Tuple[Dict[Tuple[str, str], int], Dict[Tuple[str, str], str]]:
+    """
+    Build both indexes from XML in a single pass:
+      - color_index: (ORDERID, LOTID) -> COLOR
+      - seller_note_index: (ORDERID, LOTID) -> DESCRIPTION (seller note)
+    """
+    color_index: Dict[Tuple[str, str], int] = {}
+    seller_note_index: Dict[Tuple[str, str], str] = {}
+
     if not os.path.exists(ORDERS_DIR):
-        return idx
+        return color_index, seller_note_index
 
     merged_xml_exists = os.path.exists(os.path.join(ORDERS_DIR, 'orders.xml'))
     for fn in os.listdir(ORDERS_DIR):
@@ -153,16 +165,22 @@ def _build_xml_color_index() -> Dict[Tuple[str, str], int]:
                     lot_id = (it.findtext("LOTID") or "").strip()
                     if not lot_id:
                         continue
+                    # color id
                     try:
                         color_id = int(it.findtext("COLOR", "0") or 0)
                     except ValueError:
                         color_id = 0
-                    idx[(oid, lot_id)] = color_id
+                    color_index[(oid, lot_id)] = color_id
+                    # seller note/description
+                    note = (it.findtext("DESCRIPTION") or "").strip()
+                    if note:
+                        seller_note_index[(oid, lot_id)] = note
         except ET.ParseError:
             continue
         except Exception:
             continue
-    return idx
+
+    return color_index, seller_note_index
 
 
 def write_minimal_orders_xml(orders: List[Order], output_path: str):
@@ -197,11 +215,10 @@ def load_orders():
     if not os.path.exists(ORDERS_DIR):
         return inventory_list, orders_list
 
-    # Prefer merged files when present to avoid duplication
     merged_csv_exists = os.path.exists(os.path.join(ORDERS_DIR, 'orders.csv'))
 
-    # Build color index from XML (ORDERID, LOTID) -> COLOR
-    xml_color_index = _build_xml_color_index()
+    # Build indices from XML in a single pass
+    xml_color_index, xml_seller_note_index = _build_xml_indexes()
 
     current_order: Optional[Order] = None
     # Parse CSV, build orders and items
@@ -243,16 +260,24 @@ def load_orders():
 
                 # Extract item fields from CSV
                 cond = (row.get("Condition") or "").strip()
-                desc = (row.get("Item Description") or "").strip()
+                csv_desc_raw = (row.get("Item Description") or "")
+                csv_desc = _normalize_spaces(csv_desc_raw)  # normalized full description for Orders sheet
                 qty = _parse_int(row.get("Qty"))
                 price = _parse_money(row.get("Each"))
                 item_type_label = (row.get("Item Type") or "").strip()
                 type_code = _map_item_type(item_type_label)
                 lot_id = (row.get("Inv ID") or "").strip()
+
                 color_id = 0
-                # Resolve color for parts by (ORDERID, LOTID)
                 if type_code == "P" and lot_id:
                     color_id = xml_color_index.get((current_order.order_id, lot_id), 0)
+
+                # Clean description for inventory by removing seller note suffix from CSV desc
+                seller_note = xml_seller_note_index.get((current_order.order_id, lot_id), "")
+                if seller_note and csv_desc.endswith(seller_note):
+                    clean_desc = csv_desc[: -len(seller_note)].rstrip(" -")
+                else:
+                    clean_desc = csv_desc
 
                 # Compute unit_cost with proportional fees based on order header totals
                 order_total = current_order.order_total or 0.0
@@ -271,7 +296,8 @@ def load_orders():
                     qty=qty,
                     price=price,
                     condition=cond,
-                    description=desc,
+                    description=csv_desc,           # full CSV description for Orders sheet
+                    clean_description=clean_desc,   # cleaned for inventory sheets
                     unit_cost=unit_cost,
                     lot_id=lot_id,
                 )

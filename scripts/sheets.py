@@ -70,13 +70,24 @@ def _aggregate_inventory(items):
         line_total_cost = float(getattr(it, 'unit_cost', 0.0) or 0.0) * line_qty
         new_qty = entry['qty'] + line_qty
         new_total_cost = entry['total_cost'] + line_total_cost
+
+        # Prefer cleaned description (CSV minus seller note)
+        desc = getattr(it, 'clean_description', None) or getattr(it, 'description', '') or entry['description']
+        # For parts, remove leading color name and any whitespace after it
+        cn = get_color_name(it.color_id) if it.item_type == 'P' else None
+        if it.item_type == 'P' and cn:
+            if desc.startswith(cn):
+                desc = desc[len(cn):].lstrip()
+            elif desc.lower().startswith(cn.lower()):
+                desc = desc[len(cn):].lstrip()
+
         agg[key].update({
             'qty': new_qty,
             'total_cost': new_total_cost,
             'unit_cost': (new_total_cost / new_qty) if new_qty else 0.0,
-            'description': getattr(it, 'description', '') or entry['description'],
+            'description': desc,
             'color_id': it.color_id if it.item_type == 'P' else None,
-            'color_name': get_color_name(it.color_id) if it.item_type == 'P' else None,
+            'color_name': cn if it.item_type == 'P' else None,
             'item_type': it.item_type,
         })
     return agg
@@ -124,56 +135,49 @@ def update_leftovers(sheet, items):
 def read_orders_sheet_edits(sheet):
     """
     Reads the current Orders worksheet to capture any user edits.
-    Returns a dictionary keyed by (Order ID, Item Number) with ALL fields.
-    
-    Handles the order structure where only the first row of each order 
-    contains the Order ID, and subsequent item rows have empty Order ID
-    until the next order starts.
+    Returns a dictionary keyed by (Order ID, Item #) with ALL fields.
+
+    Handles structure where only the first item row of each order shows Order ID
+    and subsequent item rows have an empty Order ID (we carry forward context).
     """
     try:
         ws = get_or_create_worksheet(sheet, "Orders")
         records = ws.get_all_records()
-        
+
         edits = {}
         current_order_id = ""
-        
+
         for record in records:
-            # Get the Order ID from this row
+            # Get Order ID from this row (or carry forward)
             row_order_id = record.get("Order ID", "")
-            item_number = record.get("Item Number", "")
-            
-            # If this row has an Order ID, update our current order context
+            item_number = record.get("Item #", "") or record.get("Item Number", "")  # fallback to legacy name
+
             if row_order_id:
                 current_order_id = row_order_id
                 order_id = row_order_id
             else:
-                # This row doesn't have an Order ID, so it belongs to the current order
                 order_id = current_order_id
-            
-            # Skip rows that don't belong to any order
+
             if not order_id:
                 continue
-            
-            # For order header rows (no Item Number), use just Order ID
-            # For item rows, use Order ID + Item Number
-            key = (order_id, item_number) if item_number else (order_id, "")
-            
-            # Store all fields for this row, but ensure Order ID is set correctly
-            # for item rows that had empty Order ID in the sheet
+
+            # Every row is an item row in the new structure
+            key = (order_id, item_number)
+
             record_copy = record.copy()
             if not row_order_id and order_id:
                 record_copy["Order ID"] = order_id
-            
+
             edits[key] = record_copy
-                
+
         return edits
     except Exception:
-        # If there's any error reading the sheet, return empty dict
         return {}
 
 def update_orders_sheet(sheet, orders):
     """
     Updates the 'Orders' worksheet from a list[Order] objects.
+    First item row of each order includes order-level fields for readability.
     Preserves user edits to ALL fields and formats currency columns.
     """
     if not orders:
@@ -192,72 +196,59 @@ def update_orders_sheet(sheet, orders):
 
     data_rows = []
     for order in orders:
-        # Header row for the order
-        header_dict = {
-            "Order ID": order.order_id,
-            "Seller": order.seller,
-            "Order Date": order.order_date,
-            "Shipping": order.shipping,
-            "Add Chrg": order.add_chrg_1,
-            "Subtotal": order.order_total,
-            "Order Total": order.base_grand_total,
-            "Total Lots": order.total_lots,
-            "Total Items": order.total_items,
-            "Tracking #": order.tracking_no,
-            "Condition": "",
-            "Item #": "",
-            "Description": "",
-            "Color": "",
-            "Qty": "",
-            "Each": "",
-            "Total": "",
-        }
-        # Apply edits for header row
-        key_header = (order.order_id, "")
-        if key_header in existing_edits:
-            for field, value in existing_edits[key_header].items():
-                if field in header_dict and str(value).strip():
-                    header_dict[field] = value
-        data_rows.append([header_dict.get(col, '') for col in headers])
-
-        # Item rows
-        for item in order.items:
+        for idx, item in enumerate(order.items):
             color_name = get_color_name(item.color_id)
+            # Strip color prefix for Orders sheet description as well
+            desc = item.description or ""
+            if item.item_type == 'P' and color_name:
+                if desc.startswith(color_name):
+                    desc = desc[len(color_name):].lstrip()
+                elif desc.lower().startswith(color_name.lower()):
+                    desc = desc[len(color_name):].lstrip()
+
+            # Populate order-level fields on first item row; blank on subsequent rows
             item_dict = {
-                "Order ID": order.order_id,  # will be blanked in display
-                "Seller": "",
-                "Order Date": "",
-                "Shipping": "",
-                "Add Chrg": "",
-                "Subtotal": "",
-                "Order Total": "",
-                "Total Lots": "",
-                "Total Items": "",
-                "Tracking #": "",
+                "Order ID": order.order_id if idx == 0 else "",
+                "Seller": order.seller if idx == 0 else "",
+                "Order Date": order.order_date if idx == 0 else "",
+                "Shipping": order.shipping if idx == 0 else "",
+                "Add Chrg": order.add_chrg_1 if idx == 0 else "",
+                "Subtotal": order.order_total if idx == 0 else "",
+                "Order Total": order.base_grand_total if idx == 0 else "",
+                "Total Lots": order.total_lots if idx == 0 else "",
+                "Total Items": order.total_items if idx == 0 else "",
+                "Tracking #": order.tracking_no if idx == 0 else "",
                 "Condition": item.condition,
                 "Item #": item.item_id,
-                "Description": item.description or "",
+                "Description": desc,
                 "Color": color_name or item.item_type,
                 "Qty": item.qty,
                 "Each": item.price,
                 "Total": item.qty * item.price
             }
-            # Apply edits for item row
+
+            # Apply any user edits for this item row
             key_item = (order.order_id, item.item_id)
             if key_item in existing_edits:
-                for field, value in existing_edits[key_item].items():
-                    if field in item_dict and str(value).strip():
-                        item_dict[field] = value
+                user_record = existing_edits[key_item]
+                for field in headers:
+                    val = user_record.get(field, '')
+                    if str(val).strip():
+                        item_dict[field] = val
+                # Ensure non-first rows keep order fields blank for readability
+                if idx > 0:
+                    for f in ["Order ID", "Seller", "Order Date", "Shipping", "Add Chrg",
+                              "Subtotal", "Order Total", "Total Lots", "Total Items", "Tracking #"]:
+                        item_dict[f] = ""
+
             row_data = [item_dict.get(col, '') for col in headers]
-            # Clear Order ID for display on item rows
-            row_data[headers.index("Order ID")] = ""
             data_rows.append(row_data)
 
     values = [headers] + data_rows
     ws.update(values=values, range_name="A1")
     try:
-        # Format monetary columns as currency
-        currency_cols = ["Shipping", "Add Chrg 1", "Order Total", "Base Grand Total", "Each", "Total"]
+        # Format monetary columns as currency (match headers)
+        currency_cols = ["Shipping", "Add Chrg", "Subtotal", "Order Total", "Each", "Total"]
         last_row = len(values)
         for col in currency_cols:
             if col in headers:
