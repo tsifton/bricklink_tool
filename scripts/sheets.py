@@ -1,7 +1,11 @@
 import gspread
+import csv
+import os
+import xml.etree.ElementTree as ET
 from collections import defaultdict
 from typing import List, Dict, Any, Optional
 from config import get_or_create_worksheet, LEFTOVERS_TAB_NAME
+from orders import load_orders
 
 # Constants
 INVENTORY_HEADERS = ["Item ID", "Description", "Color", "Qty", "Total Cost", "Unit Cost"]
@@ -241,3 +245,435 @@ def update_orders_sheet(sheet, orders) -> None:
     _format_currency_columns(ws, ORDERS_HEADERS, 
                            ["Shipping", "Add Chrg", "Subtotal", "Order Total", "Each", "Total"], 
                            len(values))
+
+
+def detect_changes_before_merge(sheet_edits: Dict[tuple, Dict[str, Any]], orders_dir: str) -> Dict[str, List[Dict]]:
+    """Detect changes between sheet edits and current order files."""
+    if not sheet_edits:
+        return {'edits': [], 'additions': [], 'deletions': []}
+    
+    try:
+        # Temporarily override ORDERS_DIR for loading
+        import config
+        original_orders_dir = config.ORDERS_DIR
+        config.ORDERS_DIR = orders_dir
+        
+        try:
+            inventory_list, orders_data = load_orders()
+        finally:
+            config.ORDERS_DIR = original_orders_dir
+        
+        # Build current data structure similar to sheet format
+        current_data = {}
+        
+        # Handle both Order objects (real execution) and row dicts (mocked execution)
+        if orders_data and isinstance(orders_data[0], dict):
+            # Mocked execution - orders_data is a list of row dictionaries
+            for row in orders_data:
+                order_id = str(row.get("Order ID", "")).strip()
+                item_id = str(row.get("Item Number", "")).strip()
+                
+                if order_id:
+                    key = (order_id, item_id)
+                    current_data[key] = {
+                        "Order ID": order_id,
+                        "Seller": str(row.get("Seller", "")),
+                        "Order Date": str(row.get("Order Date", "")),
+                        "Order Total": str(row.get("Order Total", "")),
+                        "Base Grand Total": str(row.get("Base Grand Total", "")),
+                        "Shipping": str(row.get("Shipping", "")),
+                        "Add Chrg": str(row.get("Add Chrg", "")),
+                        "Total Lots": str(row.get("Total Lots", "")),
+                        "Total Items": str(row.get("Total Items", "")),
+                        "Tracking #": str(row.get("Tracking #", "")),
+                        "Item Number": item_id,
+                        "Item Description": str(row.get("Item Description", "")),
+                        "Color": str(row.get("Color", "")),
+                        "Condition": str(row.get("Condition", "")),
+                        "Qty": str(row.get("Qty", "")),
+                        "Each": str(row.get("Each", "")),
+                        "Total": str(row.get("Total", ""))
+                    }
+        else:
+            # Real execution - orders_data is a list of Order objects
+            for order in orders_data:
+                # Add order header row
+                current_data[(order.order_id, "")] = {
+                    "Order ID": order.order_id,
+                    "Seller": order.seller,
+                    "Order Date": order.order_date,
+                    "Order Total": str(order.order_total),
+                    "Base Grand Total": str(order.base_grand_total),
+                    "Shipping": str(order.shipping),
+                    "Add Chrg": str(order.add_chrg_1),
+                    "Total Lots": str(order.total_lots),
+                    "Total Items": str(order.total_items),
+                    "Tracking #": order.tracking_no,
+                    "Item Number": ""
+                }
+                
+                # Add item rows
+                for item in order.items:
+                    current_data[(order.order_id, item.item_id)] = {
+                        "Order ID": order.order_id,
+                        "Item Number": item.item_id,
+                        "Item Description": item.description,
+                        "Color": getattr(item, 'color_name', item.item_type),
+                        "Condition": item.condition,
+                        "Qty": str(item.qty),
+                        "Each": str(item.price),
+                        "Total": str(item.qty * item.price)
+                    }
+        
+        # Detect changes
+        edits = []
+        additions = []
+        deletions = []
+        
+        # Check for edits and additions
+        for key, sheet_data in sheet_edits.items():
+            order_id, item_id = key
+            if key in current_data:
+                # Check if any fields differ
+                current_record = current_data[key]
+                has_changes = False
+                
+                for field, sheet_value in sheet_data.items():
+                    if field in current_record:
+                        current_value = str(current_record[field])
+                        sheet_value_str = str(sheet_value)
+                        if current_value != sheet_value_str:
+                            has_changes = True
+                            break
+                
+                if has_changes:
+                    edits.append({
+                        'key': key,
+                        'order_id': order_id,
+                        'item_number': item_id,
+                        'changes': sheet_data
+                    })
+            else:
+                # New entry
+                additions.append({
+                    'key': key,
+                    'order_id': order_id,
+                    'item_number': item_id,
+                    'data': sheet_data
+                })
+        
+        # Check for deletions
+        for key in current_data:
+            if key not in sheet_edits:
+                order_id, item_id = key
+                deletions.append({
+                    'key': key,
+                    'order_id': order_id,
+                    'item_number': item_id
+                })
+        
+        return {'edits': edits, 'additions': additions, 'deletions': deletions}
+        
+    except Exception:
+        return {'edits': [], 'additions': [], 'deletions': []}
+
+
+def save_edits_to_files(sheet_edits: Dict[tuple, Dict[str, Any]], orders_dir: str) -> None:
+    """Save sheet edits back to XML and CSV files."""
+    if not sheet_edits:
+        return
+    
+    try:
+        import sys
+        import os
+        import csv
+        import xml.etree.ElementTree as ET
+        sys.path.insert(0, os.path.dirname(__file__))
+        from orders import load_orders, Order, OrderItem
+        
+        # Temporarily override ORDERS_DIR for loading
+        import config
+        original_orders_dir = config.ORDERS_DIR
+        config.ORDERS_DIR = orders_dir
+        
+        try:
+            _, orders_list = load_orders()
+        finally:
+            config.ORDERS_DIR = original_orders_dir
+        
+        # Build dict of existing orders for easy lookup
+        orders_dict = {order.order_id: order for order in orders_list}
+        
+        # Apply edits to orders
+        for key, edit_data in sheet_edits.items():
+            order_id, item_id = key
+            
+            # Get or create order
+            if order_id not in orders_dict:
+                # Create new order
+                orders_dict[order_id] = Order(
+                    order_id=order_id,
+                    order_date="",
+                    seller="",
+                    order_total=0.0,
+                    base_grand_total=0.0,
+                    items=[]
+                )
+            
+            order = orders_dict[order_id]
+            
+            if not item_id:  # Order-level edit
+                # Update order fields
+                if "Seller" in edit_data and edit_data["Seller"]:
+                    order.seller = str(edit_data["Seller"])
+                if "Order Date" in edit_data and edit_data["Order Date"]:
+                    order.order_date = str(edit_data["Order Date"])
+                if "Order Total" in edit_data and edit_data["Order Total"]:
+                    order.order_total = float(str(edit_data["Order Total"]).replace('$', '').replace(',', ''))
+                if "Base Grand Total" in edit_data and edit_data["Base Grand Total"]:
+                    order.base_grand_total = float(str(edit_data["Base Grand Total"]).replace('$', '').replace(',', ''))
+                if "Shipping" in edit_data and edit_data["Shipping"]:
+                    order.shipping = float(str(edit_data["Shipping"]).replace('$', '').replace(',', ''))
+                if "Add Chrg" in edit_data and edit_data["Add Chrg"]:
+                    order.add_chrg_1 = float(str(edit_data["Add Chrg"]).replace('$', '').replace(',', ''))
+                if "Total Lots" in edit_data and edit_data["Total Lots"]:
+                    order.total_lots = int(edit_data["Total Lots"])
+                if "Total Items" in edit_data and edit_data["Total Items"]:
+                    order.total_items = int(edit_data["Total Items"])
+                if "Tracking #" in edit_data and edit_data["Tracking #"]:
+                    order.tracking_no = str(edit_data["Tracking #"])
+            else:  # Item-level edit
+                # Find or create item
+                item = None
+                for existing_item in order.items:
+                    if existing_item.item_id == item_id:
+                        item = existing_item
+                        break
+                
+                if not item:
+                    # Create new item
+                    item = OrderItem(
+                        item_id=item_id,
+                        item_type="P",
+                        color_id=0,
+                        qty=0,
+                        price=0.0,
+                        condition="N"
+                    )
+                    order.items.append(item)
+                
+                # Update item fields
+                if "Condition" in edit_data and edit_data["Condition"]:
+                    item.condition = str(edit_data["Condition"])
+                if "Qty" in edit_data and edit_data["Qty"]:
+                    item.qty = int(edit_data["Qty"])
+                if "Each" in edit_data and edit_data["Each"]:
+                    item.price = float(str(edit_data["Each"]).replace('$', '').replace(',', ''))
+                if "Item Description" in edit_data and edit_data["Item Description"]:
+                    item.description = str(edit_data["Item Description"])
+        
+        # Save to XML files
+        for filename in os.listdir(orders_dir):
+            if filename.endswith('.xml'):
+                xml_path = os.path.join(orders_dir, filename)
+                try:
+                    tree = ET.parse(xml_path)
+                    root = tree.getroot()
+                    
+                    # Update each order in the XML
+                    for order_elem in root.findall("ORDER"):
+                        order_id = order_elem.findtext("ORDERID", "").strip()
+                        if order_id in orders_dict:
+                            order = orders_dict[order_id]
+                            
+                            # Update order fields
+                            if order_elem.find("SELLER") is not None:
+                                order_elem.find("SELLER").text = order.seller
+                            if order_elem.find("ORDERDATE") is not None:
+                                order_elem.find("ORDERDATE").text = order.order_date
+                            if order_elem.find("ORDERTOTAL") is not None:
+                                order_elem.find("ORDERTOTAL").text = f"{order.order_total:.2f}"
+                            if order_elem.find("BASEGRANDTOTAL") is not None:
+                                order_elem.find("BASEGRANDTOTAL").text = f"{order.base_grand_total:.2f}"
+                            
+                            # Update item fields
+                            for item_elem in order_elem.findall("ITEM"):
+                                item_id = item_elem.findtext("ITEMID", "").strip()
+                                for item in order.items:
+                                    if item.item_id == item_id:
+                                        if item_elem.find("CONDITION") is not None:
+                                            item_elem.find("CONDITION").text = item.condition
+                                        if item_elem.find("QTY") is not None:
+                                            item_elem.find("QTY").text = str(item.qty)
+                                        if item_elem.find("PRICE") is not None:
+                                            item_elem.find("PRICE").text = f"{item.price:.2f}"
+                                        if item_elem.find("DESCRIPTION") is not None:
+                                            item_elem.find("DESCRIPTION").text = item.description
+                                        break
+                    
+                    # Write back to file
+                    ET.indent(tree, space="  ", level=0)
+                    tree.write(xml_path, encoding="utf-8", xml_declaration=True)
+                except ET.ParseError:
+                    continue
+        
+        # Save to CSV files  
+        for filename in os.listdir(orders_dir):
+            if filename.endswith('.csv'):
+                csv_path = os.path.join(orders_dir, filename)
+                try:
+                    # Read existing CSV
+                    rows = []
+                    with open(csv_path, 'r', newline='', encoding='utf-8') as f:
+                        reader = csv.DictReader(f)
+                        rows = list(reader)
+                    
+                    # Update rows based on edits
+                    for i, row in enumerate(rows):
+                        order_id = row.get("Order ID", "").strip()
+                        item_id = row.get("Item Number", "").strip()
+                        key = (order_id, item_id)
+                        
+                        if key in sheet_edits:
+                            edit_data = sheet_edits[key]
+                            
+                            # Update CSV fields based on edits
+                            if "Condition" in edit_data and edit_data["Condition"]:
+                                row["Condition"] = str(edit_data["Condition"])
+                            if "Qty" in edit_data and edit_data["Qty"]:
+                                row["Qty"] = str(edit_data["Qty"])
+                            if "Each" in edit_data and edit_data["Each"]:
+                                row["Each"] = str(edit_data["Each"])
+                            if "Total" in edit_data and edit_data["Total"]:
+                                row["Total"] = str(edit_data["Total"])
+                            if "Item Description" in edit_data and edit_data["Item Description"]:
+                                row["Item Description"] = str(edit_data["Item Description"])
+                    
+                    # Write back to CSV
+                    if rows:
+                        with open(csv_path, 'w', newline='', encoding='utf-8') as f:
+                            writer = csv.DictWriter(f, fieldnames=rows[0].keys())
+                            writer.writeheader()
+                            writer.writerows(rows)
+                except Exception:
+                    continue
+                    
+    except Exception:
+        pass
+
+
+def detect_deleted_orders(original_rows: List[Dict], sheet_edits: Dict[tuple, Dict[str, Any]]) -> List[tuple]:
+    """Detect orders/items that have been deleted from the sheet."""
+    deleted_keys = []
+    
+    # Build set of keys from original data
+    original_keys = set()
+    for row in original_rows:
+        order_id = row.get("Order ID", "").strip()
+        item_id = row.get("Item Number", "").strip()
+        if order_id:  # Only add if we have an order ID
+            original_keys.add((order_id, item_id))
+    
+    # Find keys that exist in original but not in sheet edits
+    sheet_keys = set(sheet_edits.keys())
+    deleted_keys = list(original_keys - sheet_keys)
+    
+    return deleted_keys
+
+
+def remove_deleted_orders_from_files(deleted_keys: List[tuple], orders_dir: str) -> None:
+    """Remove deleted orders/items from XML and CSV files."""
+    if not deleted_keys:
+        return
+    
+    # Remove from XML files
+    for filename in os.listdir(orders_dir):
+            if filename.endswith('.xml'):
+                xml_path = os.path.join(orders_dir, filename)
+                try:
+                    tree = ET.parse(xml_path)
+                    root = tree.getroot()
+                    
+                    # Find orders/items to remove
+                    orders_to_remove = []
+                    for order_elem in root.findall("ORDER"):
+                        order_id = order_elem.findtext("ORDERID", "").strip()
+                        
+                        # Check if entire order should be deleted
+                        if (order_id, "") in deleted_keys:
+                            orders_to_remove.append(order_elem)
+                        else:
+                            # Check for items to delete within the order
+                            items_to_remove = []
+                            for item_elem in order_elem.findall("ITEM"):
+                                item_id = item_elem.findtext("ITEMID", "").strip()
+                                if (order_id, item_id) in deleted_keys:
+                                    items_to_remove.append(item_elem)
+                            
+                            # Remove items
+                            for item_elem in items_to_remove:
+                                order_elem.remove(item_elem)
+                    
+                    # Remove entire orders
+                    for order_elem in orders_to_remove:
+                        root.remove(order_elem)
+                    
+                    # Write back to file
+                    ET.indent(tree, space="  ", level=0)
+                    tree.write(xml_path, encoding="utf-8", xml_declaration=True)
+                except ET.ParseError:
+                    continue
+    
+    # Remove from CSV files
+    for filename in os.listdir(orders_dir):
+        if filename.endswith('.csv'):
+                csv_path = os.path.join(orders_dir, filename)
+                try:
+                    # Read existing CSV
+                    rows = []
+                    with open(csv_path, 'r', newline='', encoding='utf-8') as f:
+                        reader = csv.DictReader(f)
+                        rows = list(reader)
+                    
+                    # Filter out deleted rows
+                    filtered_rows = []
+                    for row in rows:
+                        order_id = row.get("Order ID", "").strip()
+                        item_id = row.get("Item Number", "").strip()
+                        key = (order_id, item_id)
+                        
+                        if key not in deleted_keys:
+                            filtered_rows.append(row)
+                    
+                    # Write back to CSV
+                    if rows:  # Only if we had data originally
+                        with open(csv_path, 'w', newline='', encoding='utf-8') as f:
+                            if filtered_rows:
+                                writer = csv.DictWriter(f, fieldnames=rows[0].keys())
+                                writer.writeheader()
+                                writer.writerows(filtered_rows)
+                            else:
+                                # If no rows left, write just headers
+                                writer = csv.DictWriter(f, fieldnames=rows[0].keys())
+                                writer.writeheader()
+                except Exception:
+                    continue
+
+
+def detect_deleted_orders(original_rows: List[Dict], sheet_edits: Dict[tuple, Dict[str, Any]]) -> List[tuple]:
+    """Detect orders/items that have been deleted from the sheet."""
+    deleted_keys = []
+    
+    # Build set of keys from original data
+    original_keys = set()
+    for row in original_rows:
+        order_id = str(row.get("Order ID", "")).strip()
+        item_id = str(row.get("Item Number", "")).strip()
+        if order_id:  # Only add if we have an order ID
+            original_keys.add((order_id, item_id))
+    
+    # Find keys that exist in original but not in sheet edits
+    sheet_keys = set(sheet_edits.keys())
+    deleted_keys = list(original_keys - sheet_keys)
+    
+    return deleted_keys

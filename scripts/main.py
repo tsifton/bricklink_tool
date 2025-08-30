@@ -6,7 +6,10 @@ from sheets import (
     update_summary,
     update_inventory_sheet,
     update_leftovers,
-    update_orders_sheet
+    update_orders_sheet,
+    read_orders_sheet_edits,
+    detect_changes_before_merge,
+    save_edits_to_files
 )
 import merge_orders
 
@@ -16,15 +19,25 @@ def main():
     Loads data, computes buildable quantities, and updates Google Sheets.
     """
 
+    # Load or create the main Google Sheet
+    sheet = load_google_sheet()
+    
+    # Read current sheet edits before merging new orders
+    sheet_edits = read_orders_sheet_edits(sheet)
+    
+    # Detect what changes need to be preserved
+    changes = detect_changes_before_merge(sheet_edits, "orders")
+    
+    # Save user edits to files to preserve them
+    if sheet_edits:
+        save_edits_to_files(sheet_edits, "orders")
+
     # Merge order files
     merge_orders.merge_xml()
     merge_orders.merge_csv()
 
     # Load inventory (list[OrderItem]) and orders (list[Order])
     inv_list, orders_list = load_orders()
-
-    # Load or create the main Google Sheet
-    sheet = load_google_sheet()
 
     # Update the Inventory worksheet with the current inventory (pre-build)
     update_inventory_sheet(sheet, inv_list)
