@@ -9,7 +9,6 @@ from sheets import (
     update_orders_sheet
 )
 import merge_orders
-from colors import get_color_name  # for map/rows construction
 
 def main():
     """

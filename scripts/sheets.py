@@ -174,6 +174,18 @@ def read_orders_sheet_edits(sheet):
     except Exception:
         return {}
 
+def _format_currency_cols(ws, headers, cols, last_row):
+    try:
+        for col in cols:
+            if col in headers:
+                col_idx = headers.index(col)
+                col_letter = chr(ord('A') + col_idx)
+                ws.format(f"{col_letter}2:{col_letter}{last_row}", {
+                    "numberFormat": {"type": "CURRENCY", "pattern": "$#,##0.00"}
+                })
+    except Exception:
+        pass  # Ignore formatting errors
+
 def update_orders_sheet(sheet, orders):
     """
     Updates the 'Orders' worksheet from a list[Order] objects.
@@ -246,16 +258,5 @@ def update_orders_sheet(sheet, orders):
 
     values = [headers] + data_rows
     ws.update(values=values, range_name="A1")
-    try:
-        # Format monetary columns as currency (match headers)
-        currency_cols = ["Shipping", "Add Chrg", "Subtotal", "Order Total", "Each", "Total"]
-        last_row = len(values)
-        for col in currency_cols:
-            if col in headers:
-                col_idx = headers.index(col)
-                col_letter = chr(ord('A') + col_idx)
-                ws.format(f"{col_letter}2:{col_letter}{last_row}", {
-                    "numberFormat": {"type": "CURRENCY", "pattern": "$#,##0.00"}
-                })
-    except Exception:
-        pass  # Ignore formatting errors
+    last_row = len(values)
+    _format_currency_cols(ws, headers, ["Shipping", "Add Chrg", "Subtotal", "Order Total", "Each", "Total"], last_row)

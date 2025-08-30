@@ -1,8 +1,6 @@
 import os
 import csv
 import xml.etree.ElementTree as ET
-from collections import defaultdict
-from colors import get_color_name
 from config import ORDERS_DIR
 from dataclasses import dataclass, field
 from typing import List, Dict, Tuple, Optional
@@ -272,10 +270,16 @@ def load_orders():
                 if type_code == "P" and lot_id:
                     color_id = xml_color_index.get((current_order.order_id, lot_id), 0)
 
-                # Clean description for inventory by removing seller note suffix from CSV desc
-                seller_note = xml_seller_note_index.get((current_order.order_id, lot_id), "")
-                if seller_note and csv_desc.endswith(seller_note):
-                    clean_desc = csv_desc[: -len(seller_note)].rstrip(" -")
+                # Clean description for inventory by removing seller note suffix using RAW text, then normalize spaces
+                seller_note_raw = xml_seller_note_index.get((current_order.order_id, lot_id), "")
+                if seller_note_raw:
+                    raw = (csv_desc_raw or "").rstrip()
+                    note = seller_note_raw.strip()
+                    if raw.endswith(note):
+                        stripped = raw[: -len(note)].rstrip(" -")
+                        clean_desc = _normalize_spaces(stripped)
+                    else:
+                        clean_desc = csv_desc
                 else:
                     clean_desc = csv_desc
 
@@ -296,8 +300,8 @@ def load_orders():
                     qty=qty,
                     price=price,
                     condition=cond,
-                    description=csv_desc,           # full CSV description for Orders sheet
-                    clean_description=clean_desc,   # cleaned for inventory sheets
+                    description=csv_desc,           # normalized full CSV description for Orders sheet
+                    clean_description=clean_desc,   # normalized cleaned description for inventory sheets
                     unit_cost=unit_cost,
                     lot_id=lot_id,
                 )
