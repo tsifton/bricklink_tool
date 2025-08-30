@@ -47,19 +47,19 @@ def determine_buildable(wanted_list: WantedList, inventory):
         return cost
 
     # Sets (only one set entry supported per wanted list)
-    set_item = next((ri for ri in req_items if ri.item_type == 'S'), None)
-    if set_item:
+    set_item = next((req_item for req_item in req_items if req_item.item_type == 'S'), None)
+    if set_item and set_item.qty > 0:
         builds = total_qty(set_item.item_id, item_type='S', ignore_color=True) // set_item.qty
         if builds:
             build_cost += consume(set_item.item_id, set_item.qty * builds, item_type='S', ignore_color=True)
             build_count += builds
 
-    # Minifigs and accessories
-    minifigs = {ri.item_id: ri.qty for ri in req_items if ri.item_type == 'M'}
+    # Minifigs and accessories (ignore any zero-qty requirements)
+    minifigs = {req_item.item_id: req_item.qty for req_item in req_items if req_item.item_type == 'M' and req_item.qty > 0}
     accessories = {
-        (ri.item_id, ri.color_id): ri.qty
-        for ri in req_items
-        if ri.item_type == 'P' and not ri.is_minifig_part
+        (req_item.item_id, req_item.color_id): req_item.qty
+        for req_item in req_items
+        if req_item.item_type == 'P' and not req_item.is_minifig_part and req_item.qty > 0
     }
 
     limits = []
@@ -82,9 +82,9 @@ def determine_buildable(wanted_list: WantedList, inventory):
                 build_cost += consume(pid, req * builds, item_type='P', color_id=cid)
             build_count += builds
 
-    # Parts-only builds (e.g., minifig parts lists)
-    if any(ri.is_minifig_part for ri in req_items):
-        parts = {(ri.item_id, ri.color_id): ri.qty for ri in req_items if ri.item_type == 'P'}
+    # Parts-only builds (e.g., minifig parts lists) — ignore zero-qty requirements
+    if any(req_item.is_minifig_part for req_item in req_items):
+        parts = {(req_item.item_id, req_item.color_id): req_item.qty for req_item in req_items if req_item.item_type == 'P' and req_item.qty > 0}
         if parts:
             max_builds = min(
                 total_qty(pid, item_type='P', color_id=cid) // req

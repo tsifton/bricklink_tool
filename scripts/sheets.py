@@ -109,11 +109,13 @@ def update_leftovers(sheet, items):
     ws = get_or_create_worksheet(sheet, LEFTOVERS_TAB_NAME)
     ws.clear()
     # Write header row
-    ws.update(values=[["Item ID", "Description", "Color", "Leftover Qty"]], range_name="A1")
+    ws.update(values=[["Item ID", "Description", "Color", "Qty", "Total Cost", "Unit Cost"]], range_name="A1")
     # Aggregate list to map
     inventory = _aggregate_inventory(items)
+    # Prepare inventory rows
     rows = [
-        [iid, data['description'], data['color_name'], data['qty']]
+        [iid, data['description'], data['color_name'], data['qty'],
+         round(data['total_cost'], 2), round(data['unit_cost'], 2)]
         for (iid, _), data in inventory.items() if data['qty'] > 0
     ]
     if rows:
@@ -182,9 +184,9 @@ def update_orders_sheet(sheet, orders):
     ws = get_or_create_worksheet(sheet, "Orders")
     ws.clear()
     headers = [
-        "Order ID", "Seller", "Order Date", "Shipping", "Add Chrg 1",
-        "Order Total", "Base Grand Total", "Total Lots", "Total Items",
-        "Tracking No", "Condition", "Item Number", "Item Description",
+        "Order ID", "Seller", "Order Date", "Shipping", "Add Chrg",
+        "Subtotal", "Order Total", "Total Lots", "Total Items",
+        "Tracking #", "Condition", "Item #", "Description",
         "Color", "Qty", "Each", "Total"
     ]
 
@@ -195,16 +197,16 @@ def update_orders_sheet(sheet, orders):
             "Order ID": order.order_id,
             "Seller": order.seller,
             "Order Date": order.order_date,
-            "Shipping": "",
-            "Add Chrg 1": "",
-            "Order Total": order.order_total,
-            "Base Grand Total": order.base_grand_total,
-            "Total Lots": "",
-            "Total Items": "",
-            "Tracking No": "",
+            "Shipping": order.shipping,
+            "Add Chrg": order.add_chrg_1,
+            "Subtotal": order.order_total,
+            "Order Total": order.base_grand_total,
+            "Total Lots": order.total_lots,
+            "Total Items": order.total_items,
+            "Tracking #": order.tracking_no,
             "Condition": "",
-            "Item Number": "",
-            "Item Description": "",
+            "Item #": "",
+            "Description": "",
             "Color": "",
             "Qty": "",
             "Each": "",
@@ -226,15 +228,15 @@ def update_orders_sheet(sheet, orders):
                 "Seller": "",
                 "Order Date": "",
                 "Shipping": "",
-                "Add Chrg 1": "",
+                "Add Chrg": "",
+                "Subtotal": "",
                 "Order Total": "",
-                "Base Grand Total": "",
                 "Total Lots": "",
                 "Total Items": "",
-                "Tracking No": "",
+                "Tracking #": "",
                 "Condition": item.condition,
-                "Item Number": item.item_id,
-                "Item Description": item.description or "",
+                "Item #": item.item_id,
+                "Description": item.description or "",
                 "Color": color_name or item.item_type,
                 "Qty": item.qty,
                 "Each": item.price,
@@ -254,17 +256,15 @@ def update_orders_sheet(sheet, orders):
     values = [headers] + data_rows
     ws.update(values=values, range_name="A1")
     try:
-        # Format 'Each' and 'Total' columns as currency
-        each_index = headers.index("Each")
-        each_letter = chr(ord('A') + each_index)
-        total_index = headers.index("Total")
-        total_letter = chr(ord('A') + total_index)
+        # Format monetary columns as currency
+        currency_cols = ["Shipping", "Add Chrg 1", "Order Total", "Base Grand Total", "Each", "Total"]
         last_row = len(values)
-        ws.format(f"{each_letter}2:{each_letter}{last_row}", {
-            "numberFormat": {"type": "CURRENCY", "pattern": "$#,##0.00"}
-        })
-        ws.format(f"{total_letter}2:{total_letter}{last_row}", {
-            "numberFormat": {"type": "CURRENCY", "pattern": "$#,##0.00"}
-        })
+        for col in currency_cols:
+            if col in headers:
+                col_idx = headers.index(col)
+                col_letter = chr(ord('A') + col_idx)
+                ws.format(f"{col_letter}2:{col_letter}{last_row}", {
+                    "numberFormat": {"type": "CURRENCY", "pattern": "$#,##0.00"}
+                })
     except Exception:
         pass  # Ignore formatting errors
