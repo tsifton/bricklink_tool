@@ -79,8 +79,7 @@ def merge_xml():
                 # Store the order element and parsed date for sorting
                 orders_by_id[order_id] = {
                     'element': order_elem,
-                    'parsed_date': parsed_date,
-                    'order_date': order_date
+                    'parsed_date': parsed_date
                 }
                 
         except ET.ParseError as e:
@@ -121,7 +120,6 @@ def merge_csv():
         
     all_rows = []
     headers = None
-    orders_by_id = {}  # Track order dates for sorting
     
     # Process all CSV files
     for filename in os.listdir(ORDERS_DIR):
@@ -147,14 +145,6 @@ def merge_csv():
                     # Create a unique key for this row (order_id + item details for uniqueness)
                     item_key = f"{order_id}_{row.get('Item Number', '')}_{row.get('Color ID', '')}_{row.get('Qty', '')}"
                     
-                    # Track order dates and store rows
-                    if order_id not in orders_by_id:
-                        orders_by_id[order_id] = parsed_date
-                    else:
-                        # Keep the newer date for this order
-                        if parsed_date > orders_by_id[order_id]:
-                            orders_by_id[order_id] = parsed_date
-                    
                     # Add row with sorting info
                     row['_parsed_date'] = parsed_date
                     row['_item_key'] = item_key
@@ -170,7 +160,6 @@ def merge_csv():
     # Remove duplicates - keep rows from orders with newer dates
     unique_rows = {}
     for row in all_rows:
-        order_id = row.get('Order ID', '').strip()
         item_key = row['_item_key']
         
         if item_key not in unique_rows:

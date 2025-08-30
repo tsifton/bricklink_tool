@@ -1,4 +1,4 @@
-from config import load_google_sheet, get_config_value
+from config import load_google_sheet
 from orders import load_orders
 from wanted_lists import parse_wanted_lists
 from build_logic import determine_buildable
@@ -6,12 +6,7 @@ from sheets import (
     update_summary,
     update_inventory_sheet,
     update_leftovers,
-    update_orders_sheet,
-    read_orders_sheet_edits,
-    save_edits_to_files,
-    detect_deleted_orders,
-    remove_deleted_orders_from_files,
-    detect_changes_before_merge
+    update_orders_sheet
 )
 import merge_orders
 
@@ -20,53 +15,24 @@ def main():
     Main entry point for the Minifig Profit Tool.
     Loads data, computes buildable quantities, and updates Google Sheets.
     """
-    from config import ORDERS_DIR
-    
+
     # Load or create the main Google Sheet
     sheet = load_google_sheet()
-    
-    # Read current edits from Google Sheet BEFORE processing new data
-    # This captures user edits before merging new orders
-    sheet_edits = read_orders_sheet_edits(sheet)
-    
-    # Detect changes between current order files and order sheet before merging
-    if sheet_edits:
-        changes = detect_changes_before_merge(sheet_edits, ORDERS_DIR)
-        total_changes = len(changes['edits']) + len(changes['additions']) + len(changes['deletions'])
-        if total_changes > 0:
-            print(f"Detected changes before merge: {len(changes['edits'])} edits, "
-                  f"{len(changes['additions'])} additions, {len(changes['deletions'])} deletions")
-        else:
-            print("No changes detected between order files and sheet")
-    
-    # Now merge order files to add any new orders
+
+    # Merge order files
     merge_orders.merge_xml()
     merge_orders.merge_csv()
-    
-    # Retrieve configuration values (shipping fee and materials cost) from the Config worksheet
-    shipping_fee = get_config_value(sheet, "Shipping Fee", "B1")
-    materials_cost = get_config_value(sheet, "Materials Cost", "B2")
 
     # Load inventory and order rows from BrickLink order files
     inventory, order_rows = load_orders(return_rows=True)
     
-    # Detect deleted orders/items and remove from source files
-    deleted_keys = detect_deleted_orders(order_rows, sheet_edits)
-    if deleted_keys:
-        remove_deleted_orders_from_files(deleted_keys, ORDERS_DIR)
-        print(f"Removed {len(deleted_keys)} deleted entries from source files")
-        # Reload data after deletions
-        inventory, order_rows = load_orders(return_rows=True)
-    
-    # Save any edits from Google Sheet back to source files
-    if sheet_edits:
-        save_edits_to_files(sheet_edits, ORDERS_DIR)
-        print("Saved edits back to source files")
-        # Reload data after edits to ensure consistency
-        inventory, order_rows = load_orders(return_rows=True)
+    # Retrieve configuration values (shipping fee and materials cost) from the Config worksheet
+    shipping_fee = get_config_value(sheet, "Shipping Fee", "B1")
+    materials_cost = get_config_value(sheet, "Materials Cost", "B2")
     
     # Update the Inventory worksheet with the current inventory
     update_inventory_sheet(sheet, inventory)
+
     # Parse all wanted lists from XML files
     wanted_lists = parse_wanted_lists()
 
