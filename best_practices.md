@@ -9,8 +9,8 @@ Minifig Profit Tool for BrickLink sellers. It aggregates BrickLink order exports
     - main.py — Entrypoint that merges orders, loads data, computes buildable counts, and updates Google Sheets.
     - merge_orders.py — Merges multiple orders XML/CSV into canonical orders.xml/orders.csv (sorted by date, unique by Order ID).
     - orders.py — Loads orders from XML/CSV into an inventory structure and row list for Google Sheets.
-    - wanted_lists.py — Parses wanted list XMLs and normalizes items for build logic.
-    - build_logic.py — Core algorithm to determine build counts, cost, and updated inventory.
+    - wanted_lists.py — Parses wanted list XMLs and returns WantedList objects.
+    - build_logic.py — Core algorithm to determine build counts, cost, and updated inventory from lists of OrderItem.
     - sheets.py — All Google Sheets update/formatting logic (Summary, Inventory, Leftover Inventory, Orders).
     - colors.py — BrickLink color ID → name map and get_color_name utility.
     - config.py — Constants, Google auth/client bootstrap, worksheet helpers, and config value retrieval.
@@ -61,7 +61,10 @@ Conventions and entry points
 
 ## 5. Common Patterns
 - Separation of concerns:
-  - Parsing (orders.py, wanted_lists.py), algorithm (build_logic.py), external I/O (sheets.py, merge_orders.py), orchestration (main.py).
+  - Parsing (orders.py, wanted_lists.py), algorithm (build_logic.py), external I/O (sheets.py), orchestration (main.py).
+- Data exchange:
+  - Build logic consumes lists of dataclass objects (WantedList/RequiredItem and OrderItem), not raw dicts.
+  - Spreadsheet layers may still use aggregated dict maps; convert to/from lists at boundaries.
 - Fee allocation:
   - order-level fees are distributed proportionally to item totals, then merged into inventory cost basis.
 - Build determination:
@@ -76,6 +79,7 @@ Conventions and entry points
 - Do
   - Keep scripts small and single-purpose; place shared logic in scripts/ modules.
   - Preserve inventory key semantics: parts require color_id; sets/minifigs must use (item_id, None).
+  - Prefer object lists over raw dicts in new logic; convert only at I/O boundaries.
   - Maintain proportional fee distribution logic when adding new order fields.
   - Use get_color_name to normalize color labels for UI/Sheets.
   - Keep Google Sheets formulas "USER_ENTERED" and avoid overwriting existing user-provided prices in Summary.
@@ -87,6 +91,7 @@ Conventions and entry points
   - Don’t assume date formats; continue to parse with fallbacks.
   - Don’t swallow broad exceptions around core algorithms; only guard I/O or UI formatting.
   - Don’t change Orders/Inventory/Summary column orders without updating dependent code and tests.
+  - Don’t pass raw dicts into core algorithms; use dataclass objects instead.
 
 ## 7. Tools & Dependencies
 - Key libraries
@@ -106,5 +111,6 @@ Conventions and entry points
 - Orders sheet columns are explicitly defined and formatted; maintain headers when adding new fields.
 - Summary formulas compute Profit, Margin, Markup, and suggested prices (75/100/125/150%); ensure Config!B1 (Shipping Fee) and Config!B2 (Materials Cost) exist.
 - wanted_lists items may mark parts as isMinifigPart=True to trigger parts-only build logic.
+- wanted_lists.parse_wanted_lists returns List[WantedList].
 - colors.get_color_name returns None for unknown numeric IDs, and returns the string itself for non-numeric inputs; respect this in displays and tests.
 - Tests currently manipulate sys.path to import from scripts; if you refactor to a package, update imports to relative (from .config import ...) and tests accordingly.

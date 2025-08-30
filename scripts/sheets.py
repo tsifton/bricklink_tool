@@ -1,5 +1,6 @@
 import gspread
 from config import get_or_create_worksheet, LEFTOVERS_TAB_NAME
+from colors import get_color_name
 
 def update_summary(sheet, summary_rows):
     """
@@ -47,40 +48,74 @@ def update_summary(sheet, summary_rows):
     except Exception:
         pass  # Ignore formatting errors
 
-def update_inventory_sheet(sheet, inventory):
+def _aggregate_inventory(items):
     """
-    Updates the 'Inventory' worksheet with inventory data.
+    Aggregate a list[OrderItem] into a map keyed by (item_id, color_key)
+    where color_key is None for sets/minifigs and color_id for parts.
+    """
+    from collections import defaultdict
+    agg = defaultdict(lambda: {
+        'qty': 0,
+        'total_cost': 0.0,
+        'unit_cost': 0.0,
+        'description': '',
+        'color_id': None,
+        'color_name': None,
+        'item_type': None,
+    })
+    for it in items or []:
+        key = (it.item_id, None if it.item_type in ('S', 'M') else it.color_id)
+        entry = agg[key]
+        line_qty = int(getattr(it, 'qty', 0) or 0)
+        line_total_cost = float(getattr(it, 'unit_cost', 0.0) or 0.0) * line_qty
+        new_qty = entry['qty'] + line_qty
+        new_total_cost = entry['total_cost'] + line_total_cost
+        agg[key].update({
+            'qty': new_qty,
+            'total_cost': new_total_cost,
+            'unit_cost': (new_total_cost / new_qty) if new_qty else 0.0,
+            'description': getattr(it, 'description', '') or entry['description'],
+            'color_id': it.color_id if it.item_type == 'P' else None,
+            'color_name': get_color_name(it.color_id) if it.item_type == 'P' else None,
+            'item_type': it.item_type,
+        })
+    return agg
+
+def update_inventory_sheet(sheet, items):
+    """
+    Updates the 'Inventory' worksheet from a list[OrderItem].
     Only includes items with qty > 0.
     """
     ws = get_or_create_worksheet(sheet, "Inventory")
     ws.clear()
     # Write header row
     ws.update(values=[["Item ID", "Description", "Color", "Qty", "Total Cost", "Unit Cost"]], range_name="A1")
+    # Aggregate list to map
+    inventory = _aggregate_inventory(items)
     # Prepare inventory rows
     rows = [
-        [iid, item['description'], item['color_name'], item['qty'],
-         round(item['total_cost'], 2), round(item['unit_cost'], 2)]
-        for (iid, color_id), item in inventory.items() if item['qty'] > 0
+        [iid, data['description'], data['color_name'], data['qty'],
+         round(data['total_cost'], 2), round(data['unit_cost'], 2)]
+        for (iid, _), data in inventory.items() if data['qty'] > 0
     ]
-    # Write inventory data rows
     if rows:
         ws.update(values=rows, range_name="A2")
 
-def update_leftovers(sheet, inventory):
+def update_leftovers(sheet, items):
     """
-    Updates the leftovers worksheet with items that have leftover quantity.
+    Updates the leftovers worksheet from a list[OrderItem].
     Only includes items with qty > 0.
     """
     ws = get_or_create_worksheet(sheet, LEFTOVERS_TAB_NAME)
     ws.clear()
     # Write header row
     ws.update(values=[["Item ID", "Description", "Color", "Leftover Qty"]], range_name="A1")
-    # Prepare leftover rows
+    # Aggregate list to map
+    inventory = _aggregate_inventory(items)
     rows = [
         [iid, data['description'], data['color_name'], data['qty']]
         for (iid, _), data in inventory.items() if data['qty'] > 0
     ]
-    # Write leftover data rows
     if rows:
         ws.update(values=rows, range_name="A2")
 
@@ -134,55 +169,88 @@ def read_orders_sheet_edits(sheet):
         # If there's any error reading the sheet, return empty dict
         return {}
 
-def update_orders_sheet(sheet, order_rows):
+def update_orders_sheet(sheet, orders):
     """
-    Updates the 'Orders' worksheet with order_rows data.
+    Updates the 'Orders' worksheet from a list[Order] objects.
     Preserves user edits to ALL fields and formats currency columns.
     """
-    if not order_rows:
+    if not orders:
         return
-    
-    # Read existing user edits before clearing the sheet
+
     existing_edits = read_orders_sheet_edits(sheet)
-    
+
     ws = get_or_create_worksheet(sheet, "Orders")
     ws.clear()
-    # Define header columns
     headers = [
         "Order ID", "Seller", "Order Date", "Shipping", "Add Chrg 1",
         "Order Total", "Base Grand Total", "Total Lots", "Total Items",
         "Tracking No", "Condition", "Item Number", "Item Description",
         "Color", "Qty", "Each", "Total"
     ]
-    
-    # Prepare order data rows and apply user edits
+
     data_rows = []
-    for row in order_rows:
-        # Create the base row from the data
-        row_data = [row.get(col, '') for col in headers]
-        
-        # For visual clarity in the sheet, clear Order ID for item rows
-        # (item rows have Item Number, order header rows don't)
-        item_number = row.get("Item Number", "")
-        if item_number:  # This is an item row
-            order_id_index = headers.index("Order ID")
-            row_data[order_id_index] = ""  # Clear Order ID for display
-        
-        # Create key to look up user edits (using original Order ID from data)
-        order_id = row.get("Order ID", "")
-        key = (order_id, item_number) if item_number else (order_id, "")
-        
-        # Apply any user edits for this row
-        if key in existing_edits:
-            user_record = existing_edits[key]
-            for field in headers:
-                value = user_record.get(field, '')
-                if value and str(value).strip():  # Only apply non-empty values
-                    field_index = headers.index(field)
-                    row_data[field_index] = value
-        
-        data_rows.append(row_data)
-    
+    for order in orders:
+        # Header row for the order
+        header_dict = {
+            "Order ID": order.order_id,
+            "Seller": order.seller,
+            "Order Date": order.order_date,
+            "Shipping": "",
+            "Add Chrg 1": "",
+            "Order Total": order.order_total,
+            "Base Grand Total": order.base_grand_total,
+            "Total Lots": "",
+            "Total Items": "",
+            "Tracking No": "",
+            "Condition": "",
+            "Item Number": "",
+            "Item Description": "",
+            "Color": "",
+            "Qty": "",
+            "Each": "",
+            "Total": "",
+        }
+        # Apply edits for header row
+        key_header = (order.order_id, "")
+        if key_header in existing_edits:
+            for field, value in existing_edits[key_header].items():
+                if field in header_dict and str(value).strip():
+                    header_dict[field] = value
+        data_rows.append([header_dict.get(col, '') for col in headers])
+
+        # Item rows
+        for item in order.items:
+            color_name = get_color_name(item.color_id)
+            item_dict = {
+                "Order ID": order.order_id,  # will be blanked in display
+                "Seller": "",
+                "Order Date": "",
+                "Shipping": "",
+                "Add Chrg 1": "",
+                "Order Total": "",
+                "Base Grand Total": "",
+                "Total Lots": "",
+                "Total Items": "",
+                "Tracking No": "",
+                "Condition": item.condition,
+                "Item Number": item.item_id,
+                "Item Description": item.description or "",
+                "Color": color_name or item.item_type,
+                "Qty": item.qty,
+                "Each": item.price,
+                "Total": item.qty * item.price
+            }
+            # Apply edits for item row
+            key_item = (order.order_id, item.item_id)
+            if key_item in existing_edits:
+                for field, value in existing_edits[key_item].items():
+                    if field in item_dict and str(value).strip():
+                        item_dict[field] = value
+            row_data = [item_dict.get(col, '') for col in headers]
+            # Clear Order ID for display on item rows
+            row_data[headers.index("Order ID")] = ""
+            data_rows.append(row_data)
+
     values = [headers] + data_rows
     ws.update(values=values, range_name="A1")
     try:

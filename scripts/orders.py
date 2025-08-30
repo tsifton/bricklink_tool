@@ -83,23 +83,16 @@ class Order:
         return order_elem
 
 
-def load_orders(return_rows=False):
+def load_orders():
     """
     Load BrickLink orders from XML and CSV.
-    Returns inventory and (optionally) rows for Google Sheets.
+    Returns:
+      - inventory_list: list[OrderItem] with per-line unit_cost (fees allocated)
+      - orders_list: list[Order] parsed from XML (item descriptions enriched from CSV)
     """
-    # Inventory is a dict keyed by (item_id, color_id) or (item_id, None)
-    # Each value is a dict with qty, total_cost, unit_cost, description, color_id, color_name
-    inventory = defaultdict(lambda: {
-        'qty': 0,
-        'total_cost': 0.0,
-        'unit_cost': 0.0,
-        'description': '',
-        'color_id': None,
-        'color_name': None,
-    })
-    all_rows = []  # List of rows for Google Sheets
-    csv_descriptions = {}  # Maps item_id to description from CSV
+    inventory_list: List[OrderItem] = []
+    orders_list: List[Order] = []
+    csv_descriptions = {}  # Maps item_id -> BrickLink 'Item Description' from CSV
 
     # Check if merged files exist - if so, use only merged files to avoid duplication
     merged_csv_exists = os.path.exists(os.path.join(ORDERS_DIR, 'orders.csv'))
@@ -109,103 +102,62 @@ def load_orders(return_rows=False):
     for fn in os.listdir(ORDERS_DIR):
         if not fn.endswith(".csv"):
             continue
-        # Skip individual CSV files if merged CSV exists
         if merged_csv_exists and fn != 'orders.csv':
             continue
-
         with open(os.path.join(ORDERS_DIR, fn), newline='', encoding='utf-8') as f:
             for row in csv.DictReader(f):
-                iid = row['Item Number'].strip()
-                desc = row.get('Item Description', '').strip()
-                # Only use the first description found for each item_id
+                iid = (row.get('Item Number') or '').strip()
+                desc = (row.get('Item Description') or '').strip()
                 if iid and desc and iid not in csv_descriptions:
                     csv_descriptions[iid] = desc
 
-    # --- Load XML orders ---
+    # --- Load XML orders, enrich descriptions, and build inventory list ---
     for fn in os.listdir(ORDERS_DIR):
         if not fn.endswith(".xml"):
             continue
-        # Skip individual XML files if merged XML exists
         if merged_xml_exists and fn != 'orders.xml':
             continue
 
         tree = ET.parse(os.path.join(ORDERS_DIR, fn))
         root = tree.getroot()
 
-        # Parse Order objects, then iterate items
         for order_elem in root.findall("ORDER"):
             order = Order.from_xml_element(order_elem)
-            order_id = order.order_id
-            order_date = order.order_date
-            seller = order.seller
-            order_total = order.order_total
-            base_total = order.base_grand_total
-            total_fees = base_total - order_total
 
-            # Add a header row for this order to the output rows
-            all_rows.append({
-                "Order ID": order_id,
-                "Order Date": order_date,
-                "Seller": seller,
-                "Shipping": "",
-                "Add Chrg 1": "",
-                "Order Total": order_total,
-                "Base Grand Total": base_total,
-                "Total Lots": "",
-                "Total Items": "",
-                "Tracking No": ""
-            })
-
-            # Build temporary list for fee distribution
-            items_tmp = []
-            for item in order.items:
-                color_name = get_color_name(item.color_id)
-                csv_desc = csv_descriptions.get(item.item_id, "")
-                part_row = {
-                    "Order ID": order_id,  # Include Order ID for proper key generation
-                    "Item Number": item.item_id,
-                    "Item Description": csv_desc,
-                    "Color": color_name or item.item_type,
-                    "Color ID": item.color_id,
-                    "Item Type": item.item_type,
-                    "Condition": item.condition,
-                    "Qty": item.qty,
-                    "Each": item.price,
-                    "Total": item.qty * item.price
-                }
-                items_tmp.append((part_row, item.description, item.color_id))
-
-            # Distribute fees across items and update inventory
-            for part_row, seller_desc, color_id in items_tmp:
-                share = (part_row["Total"] / order_total) if order_total else 0
-                fee_share = total_fees * share
-                total_with_fees = part_row["Total"] + fee_share
-
-                # Inventory key: sets/minifigs ignore color, parts use color
-                key = (part_row["Item Number"], None) if part_row["Item Type"] in ("S", "M") \
-                    else (part_row["Item Number"], part_row.get("Color ID", 0))
-                prev = inventory[key]
-                new_qty = prev['qty'] + part_row["Qty"]
-                new_total_cost = prev['total_cost'] + total_with_fees
-                unit_cost = (new_total_cost / new_qty) if new_qty else 0
-
-                csv_desc = csv_descriptions.get(part_row["Item Number"], "")
+            # Enrich each item description from CSV (remove seller suffix when present)
+            for it in order.items:
+                seller_desc = it.description or ""
+                csv_desc = csv_descriptions.get(it.item_id, "")
                 if csv_desc:
                     clean_desc = csv_desc
                     if seller_desc and clean_desc.endswith(seller_desc):
                         clean_desc = clean_desc[: -len(seller_desc)].rstrip(" -")
-                else:
-                    clean_desc = seller_desc
+                    it.description = clean_desc  # prefer CSV description
+                # else keep seller description as-is
 
-                inventory[key].update({
-                    'qty': new_qty,
-                    'total_cost': new_total_cost,
-                    'unit_cost': unit_cost,
-                    'description': clean_desc,
-                    'color_id': color_id if part_row["Item Type"] == "P" else None,
-                    'color_name': part_row["Color"] if part_row["Item Type"] == "P" else None,
-                })
-                all_rows.append(part_row)
+            # Allocate order-level fees proportionally and add per-line items to inventory_list
+            order_total = order.order_total or 0.0
+            base_total = order.base_grand_total or 0.0
+            total_fees = base_total - order_total
 
-    # Return both inventory and all_rows if requested, otherwise just inventory
-    return (inventory, all_rows) if return_rows else inventory
+            for it in order.items:
+                line_total = float(it.qty) * float(it.price)
+                share = (line_total / order_total) if order_total else 0.0
+                fee_share = total_fees * share
+                total_with_fees = line_total + fee_share
+                unit_cost = (total_with_fees / it.qty) if it.qty else 0.0
+
+                inventory_list.append(OrderItem(
+                    item_id=it.item_id,
+                    item_type=it.item_type,
+                    color_id=it.color_id if it.item_type == "P" else 0,
+                    qty=it.qty,
+                    price=it.price,
+                    condition=it.condition,
+                    description=it.description,
+                    unit_cost=unit_cost
+                ))
+
+            orders_list.append(order)
+
+    return inventory_list, orders_list
