@@ -33,12 +33,12 @@ class TestMergeOrders(unittest.TestCase):
         """Create a test CSV order file."""
         with open(os.path.join(self.test_dir, filename), 'w', newline='', encoding='utf-8') as f:
             writer = csv.DictWriter(f, fieldnames=[
-                'Order Number', 'Order Date', 'Item Number', 'Item Description',
+                'Order ID', 'Order Date', 'Item Number', 'Item Description',
                 'Color ID', 'Qty', 'Each', 'Total'
             ])
             writer.writeheader()
             writer.writerow({
-                'Order Number': order_id,
+                'Order ID': order_id,
                 'Order Date': order_date,
                 'Item Number': item_id,
                 'Item Description': 'Test Brick Description',

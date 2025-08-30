@@ -136,7 +136,7 @@ def merge_csv():
                     headers = reader.fieldnames
                 
                 for row in reader:
-                    order_id = row.get('Order Number', '').strip()
+                    order_id = row.get('Order ID', '').strip()
                     order_date = row.get('Order Date', '').strip()
                     
                     if not order_id:
@@ -170,7 +170,7 @@ def merge_csv():
     # Remove duplicates - keep rows from orders with newer dates
     unique_rows = {}
     for row in all_rows:
-        order_id = row.get('Order Number', '').strip()
+        order_id = row.get('Order ID', '').strip()
         item_key = row['_item_key']
         
         if item_key not in unique_rows:
@@ -185,7 +185,7 @@ def merge_csv():
     # Sort by order date (newest first), then by order ID for consistency
     final_rows = sorted(
         unique_rows.values(),
-        key=lambda x: (x['_parsed_date'], x.get('Order Number', '')),
+        key=lambda x: (x['_parsed_date'], x.get('Order ID', '')),
         reverse=True
     )
     
