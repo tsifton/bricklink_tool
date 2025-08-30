@@ -1,5 +1,5 @@
-wanted_lists/
-orders/
+# wanted_lists/
+# orders/
 scripts/credentials.json
 bricklink_tool.code-workspace
 
