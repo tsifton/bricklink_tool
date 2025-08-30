@@ -382,8 +382,12 @@ def _has_item_changes(sheet_row: Dict[str, Any], existing_item: Dict[str, Any]) 
         'Qty': 'qty',
         'Each': 'price',
         'Condition': 'condition',
-        'Description': 'description',
     }
+    
+    # Handle description field (could be "Description" or "Item Description")
+    description_field = 'Item Description' if 'Item Description' in sheet_row else 'Description'
+    if description_field in sheet_row:
+        item_fields[description_field] = 'description'
     
     for sheet_field, file_field in item_fields.items():
         sheet_val = str(sheet_row.get(sheet_field, '')).strip()
@@ -493,7 +497,10 @@ def _save_orders_to_xml(orders_data: Dict[str, Dict[str, Any]], xml_path: str) -
                 pass
                 
             item_data['condition'] = item_row.get('Condition', item_data['condition'])
-            item_data['description'] = item_row.get('Description', item_data['description'])
+            # Handle both "Description" and "Item Description" field names
+            description = item_row.get('Item Description') or item_row.get('Description')
+            if description:
+                item_data['description'] = description
     
     # Write XML
     root = ET.Element("ORDERS")
