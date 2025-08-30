@@ -6,7 +6,10 @@ from sheets import (
     update_summary,
     update_inventory_sheet,
     update_leftovers,
-    update_orders_sheet
+    update_orders_sheet,
+    read_orders_sheet_edits,
+    detect_changes_before_merge,
+    save_edits_to_files
 )
 import merge_orders
 
@@ -15,6 +18,19 @@ def main():
     Main entry point for the Minifig Profit Tool.
     Loads data, computes buildable quantities, and updates Google Sheets.
     """
+    
+    # Load or create the main Google Sheet first
+    sheet = load_google_sheet()
+    
+    # Read current sheet edits before merging new orders
+    sheet_edits = read_orders_sheet_edits(sheet)
+    
+    # Detect changes between sheet and existing files
+    changes = detect_changes_before_merge(sheet_edits, "orders")
+    
+    # Save any edits back to files before merging
+    if sheet_edits:
+        save_edits_to_files(sheet_edits, "orders")
 
     # Merge order files
     merge_orders.merge_xml()
@@ -22,9 +38,6 @@ def main():
 
     # Load inventory (list[OrderItem]) and orders (list[Order])
     inv_list, orders_list = load_orders()
-
-    # Load or create the main Google Sheet
-    sheet = load_google_sheet()
 
     # Update the Inventory worksheet with the current inventory (pre-build)
     update_inventory_sheet(sheet, inv_list)
