@@ -10,6 +10,8 @@ if SCRIPTS_DIR not in sys.path:
 
 import colors  # noqa: E402
 from build_logic import determine_buildable  # noqa: E402
+from orders import OrderItem  # noqa: E402
+from wanted_lists import WantedList, RequiredItem  # noqa: E402
 
 
 class TestColors(unittest.TestCase):
@@ -28,67 +30,61 @@ class TestColors(unittest.TestCase):
 
 class TestBuildLogic(unittest.TestCase):
     def test_set_only_builds(self):
-        inv = {('1234', None): {
-            'qty': 5, 'total_cost': 0.0, 'unit_cost': 2.0,
-            'description': '', 'color_id': None, 'color_name': None
-        }}
-        wanted = [{
-            'item_id': '1234', 'item_type': 'S', 'minqty': 1,
-            'color_id': None, 'isMinifigPart': False
-        }]
+        inv = [
+            OrderItem(item_id='1234', item_type='S', color_id=0, qty=5,
+                      price=0.0, unit_cost=2.0, description='', condition='')
+        ]
+        wanted = WantedList(
+            title="sets",
+            items=[RequiredItem(item_id='1234', item_type='S', qty=1, color_id=None)]
+        )
         count, cost, updated = determine_buildable(wanted, inv)
         self.assertEqual(count, 5)
         self.assertEqual(cost, 10.0)
-        self.assertEqual(updated[('1234', None)]['qty'], 0)
+        self.assertEqual([it for it in updated if it.item_id == '1234' and it.item_type == 'S'][0].qty, 0)
 
     def test_minifig_and_accessory_builds(self):
-        inv = {
-            ('m1', None): {
-                'qty': 3, 'total_cost': 0.0, 'unit_cost': 1.0,
-                'description': '', 'color_id': None, 'color_name': None
-            },
-            ('p1', 5): {
-                'qty': 6, 'total_cost': 0.0, 'unit_cost': 0.5,
-                'description': '', 'color_id': 5, 'color_name': 'Red'
-            }
-        }
-        wanted = [
-            {'item_id': 'm1', 'item_type': 'M', 'minqty': 1, 'color_id': None, 'isMinifigPart': False},
-            {'item_id': 'p1', 'item_type': 'P', 'minqty': 2, 'color_id': 5, 'isMinifigPart': False}
+        inv = [
+            OrderItem(item_id='m1', item_type='M', color_id=0, qty=3,
+                      price=0.0, unit_cost=1.0, description='', condition=''),
+            OrderItem(item_id='p1', item_type='P', color_id=5, qty=6,
+                      price=0.0, unit_cost=0.5, description='', condition='')
         ]
+        wanted = WantedList(
+            title="minifig+parts",
+            items=[
+                RequiredItem(item_id='m1', item_type='M', qty=1, color_id=None),
+                RequiredItem(item_id='p1', item_type='P', qty=2, color_id=5),
+            ]
+        )
         count, cost, updated = determine_buildable(wanted, inv)
         self.assertEqual(count, 3)
         self.assertEqual(cost, 6.0)
-        self.assertEqual(updated[('m1', None)]['qty'], 0)
-        self.assertEqual(updated[('p1', 5)]['qty'], 0)
+        self.assertEqual([it for it in updated if it.item_id == 'm1' and it.item_type == 'M'][0].qty, 0)
+        self.assertEqual([it for it in updated if it.item_id == 'p1' and it.color_id == 5][0].qty, 0)
 
     def test_parts_only_builds(self):
-        inv = {
-            ('p1', 1): {
-                'qty': 4, 'total_cost': 0.0, 'unit_cost': 0.25,
-                'description': '', 'color_id': 1, 'color_name': 'White'
-            },
-            ('p2', 2): {
-                'qty': 6, 'total_cost': 0.0, 'unit_cost': 0.5,
-                'description': '', 'color_id': 2, 'color_name': 'Tan'
-            },
-        }
-        # Use only minifig-part items to exercise the parts-only path
-        wanted = [
-            {'item_id': 'p1', 'item_type': 'P', 'minqty': 2, 'color_id': 1, 'isMinifigPart': True},
-            {'item_id': 'p2', 'item_type': 'P', 'minqty': 3, 'color_id': 2, 'isMinifigPart': True},
+        inv = [
+            OrderItem(item_id='p1', item_type='P', color_id=1, qty=4,
+                      price=0.0, unit_cost=0.25, description='', condition=''),
+            OrderItem(item_id='p2', item_type='P', color_id=2, qty=6,
+                      price=0.0, unit_cost=0.5, description='', condition=''),
         ]
+        # Use only minifig-part items to exercise the parts-only path
+        wanted = WantedList(
+            title="parts-only",
+            items=[
+                RequiredItem(item_id='p1', item_type='P', qty=2, color_id=1, is_minifig_part=True),
+                RequiredItem(item_id='p2', item_type='P', qty=3, color_id=2, is_minifig_part=True),
+            ]
+        )
         count, cost, updated = determine_buildable(wanted, inv)
         # Limiting builds: p1 -> 4//2 = 2, p2 -> 6//3 = 2
         self.assertEqual(count, 2)
         # Cost: p1 -> 0.25*2*2 = 1.0, p2 -> 0.5*3*2 = 3.0
         self.assertEqual(cost, 4.0)
-        self.assertEqual(updated[('p1', 1)]['qty'], 0)
-        self.assertEqual(updated[('p2', 2)]['qty'], 0)
-
-
-if __name__ == '__main__':
-    unittest.main()
+        self.assertEqual([it for it in updated if it.item_id == 'p1' and it.color_id == 1][0].qty, 0)
+        self.assertEqual([it for it in updated if it.item_id == 'p2' and it.color_id == 2][0].qty, 0)
 
 
 if __name__ == '__main__':
