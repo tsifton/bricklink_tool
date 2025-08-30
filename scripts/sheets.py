@@ -432,6 +432,11 @@ def save_edits_to_files(sheet_edits: Dict[tuple, Dict[str, Any]], orders_dir: st
     # Save to XML files
     xml_file = os.path.join(orders_dir, 'orders.xml')
     _save_orders_to_xml(orders_to_save, xml_file)
+    
+    # Also save to CSV if CSV file exists
+    csv_file = os.path.join(orders_dir, 'orders.csv')
+    if os.path.exists(csv_file):
+        _save_orders_to_csv(orders_to_save, csv_file)
 
 
 def _save_orders_to_xml(orders_data: Dict[str, Dict[str, Any]], xml_path: str) -> None:
@@ -531,6 +536,125 @@ def _save_orders_to_xml(orders_data: Dict[str, Dict[str, Any]], xml_path: str) -
     tree.write(xml_path, encoding="utf-8", xml_declaration=True)
 
 
+def _save_orders_to_csv(orders_data: Dict[str, Dict[str, Any]], csv_path: str) -> None:
+    """Save orders data to CSV file in BrickLink export format."""
+    # Load existing CSV data if it exists
+    existing_data = []
+    if os.path.exists(csv_path):
+        try:
+            with open(csv_path, 'r', newline='', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                existing_data = list(reader)
+        except Exception:
+            existing_data = []
+    
+    # Update existing data with edits
+    updated_data = []
+    current_order_id = ""
+    
+    # Process each existing row
+    for row in existing_data:
+        row_order_id = row.get('Order ID', '').strip()
+        item_number = row.get('Item Number', '').strip()
+        
+        # Track current order ID (same logic as read_orders_sheet_edits)
+        if row_order_id:
+            current_order_id = row_order_id
+        
+        order_id = row_order_id if row_order_id else current_order_id
+        
+        # Check if we have edits for this specific key
+        has_edits = False
+        for edit_order_id, order_info in orders_data.items():
+            if edit_order_id == order_id:
+                if item_number == '':
+                    # Order header row
+                    has_edits = bool(order_info.get('order_data'))
+                else:
+                    # Item row
+                    has_edits = item_number in order_info.get('items', {})
+                break
+        
+        if has_edits:
+            # This row has edits, update it
+            order_info = orders_data.get(order_id, {})
+            
+            if item_number == '':
+                # Order header row
+                order_data = order_info.get('order_data', {})
+                if order_data:
+                    if 'Seller' in order_data:
+                        row['Seller'] = order_data['Seller']
+                    if 'Order Date' in order_data:
+                        row['Order Date'] = order_data['Order Date']
+                    if 'Order Total' in order_data:
+                        row['Order Total'] = order_data['Order Total']
+                    if 'Base Grand Total' in order_data:
+                        row['Base Grand Total'] = order_data['Base Grand Total']
+            else:
+                # Item row
+                items_data = order_info.get('items', {})
+                item_data = items_data.get(item_number, {})
+                if item_data:
+                    if 'Qty' in item_data:
+                        row['Qty'] = item_data['Qty']
+                    if 'Each' in item_data:
+                        row['Each'] = item_data['Each']
+                    if 'Condition' in item_data:
+                        row['Condition'] = item_data['Condition']
+                    description = item_data.get('Item Description') or item_data.get('Description')
+                    if description:
+                        row['Item Description'] = description
+        
+        updated_data.append(row)
+    
+    # Add any completely new orders/items
+    for order_id, order_info in orders_data.items():
+        # Check if this is a completely new order
+        existing_order_ids = {row.get('Order ID', '').strip() for row in existing_data}
+        
+        if order_id not in existing_order_ids:
+            # Add new order header row
+            order_data = order_info.get('order_data', {})
+            header_row = {
+                'Order ID': order_id,
+                'Seller': order_data.get('Seller', ''),
+                'Order Date': order_data.get('Order Date', ''),
+                'Order Total': order_data.get('Order Total', ''),
+                'Base Grand Total': order_data.get('Base Grand Total', ''),
+                'Item Number': '',
+                'Item Description': '',
+                'Qty': '',
+                'Each': '',
+                'Condition': ''
+            }
+            updated_data.append(header_row)
+            
+            # Add item rows
+            for item_id, item_data in order_info.get('items', {}).items():
+                item_row = {
+                    'Order ID': '',  # Empty for item rows
+                    'Seller': '',
+                    'Order Date': '',
+                    'Order Total': '',
+                    'Base Grand Total': '',
+                    'Item Number': item_id,
+                    'Item Description': item_data.get('Item Description', item_data.get('Description', '')),
+                    'Qty': item_data.get('Qty', ''),
+                    'Each': item_data.get('Each', ''),
+                    'Condition': item_data.get('Condition', '')
+                }
+                updated_data.append(item_row)
+    
+    # Write updated CSV file
+    if updated_data:
+        fieldnames = updated_data[0].keys()
+        with open(csv_path, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(updated_data)
+
+
 def detect_deleted_orders(original_rows: List[Dict], sheet_edits: Dict[tuple, Dict[str, Any]]) -> List[tuple]:
     """Detect deleted orders/items by comparing original data with sheet edits."""
     if not original_rows or not sheet_edits:
@@ -579,6 +703,11 @@ def remove_deleted_orders_from_files(deleted_keys: List[tuple], orders_dir: str)
     xml_file = os.path.join(orders_dir, 'orders.xml')
     if os.path.exists(xml_file):
         _remove_from_xml_file(xml_file, orders_to_delete, orders_to_modify)
+    
+    # Remove from CSV file
+    csv_file = os.path.join(orders_dir, 'orders.csv')
+    if os.path.exists(csv_file):
+        _remove_from_csv_file(csv_file, orders_to_delete, orders_to_modify)
 
 
 def _remove_from_xml_file(xml_path: str, orders_to_delete: set, orders_to_modify: Dict[str, set]) -> None:
@@ -607,4 +736,54 @@ def _remove_from_xml_file(xml_path: str, orders_to_delete: set, orders_to_modify
         tree.write(xml_path, encoding="utf-8", xml_declaration=True)
         
     except (ET.ParseError, Exception):
+        pass
+
+
+def _remove_from_csv_file(csv_path: str, orders_to_delete: set, orders_to_modify: Dict[str, set]) -> None:
+    """Remove specified orders/items from CSV file."""
+    try:
+        # Load existing CSV data
+        existing_data = []
+        with open(csv_path, 'r', newline='', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            existing_data = list(reader)
+        
+        # Filter out deleted rows
+        filtered_data = []
+        current_order_id = ""
+        
+        for row in existing_data:
+            row_order_id = row.get('Order ID', '').strip()
+            item_number = row.get('Item Number', '').strip()
+            
+            # Track current order ID
+            if row_order_id:
+                current_order_id = row_order_id
+            
+            order_id = row_order_id if row_order_id else current_order_id
+            
+            # Skip entire orders marked for deletion
+            if order_id in orders_to_delete:
+                continue
+            
+            # Skip specific items marked for deletion
+            if order_id in orders_to_modify and item_number in orders_to_modify[order_id]:
+                continue
+            
+            filtered_data.append(row)
+        
+        # Write filtered data back to file
+        if filtered_data:
+            fieldnames = filtered_data[0].keys()
+            with open(csv_path, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(filtered_data)
+        else:
+            # Write empty file with headers
+            with open(csv_path, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=['Order ID', 'Seller', 'Order Date', 'Item Number', 'Item Description', 'Qty', 'Each', 'Condition'])
+                writer.writeheader()
+        
+    except Exception:
         pass
