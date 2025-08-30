@@ -1,4 +1,4 @@
-from config import load_google_sheet
+from config import get_config_value, load_google_sheet
 from orders import load_orders
 from wanted_lists import parse_wanted_lists
 from build_logic import determine_buildable
