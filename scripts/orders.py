@@ -1,10 +1,11 @@
 import os
+import re
 import csv
 import xml.etree.ElementTree as ET
 from config import ORDERS_DIR
 from dataclasses import dataclass, field
 from typing import List, Dict, Tuple, Optional
-import re
+from colors import get_color_name
 
 
 @dataclass
@@ -16,9 +17,10 @@ class OrderItem:
     price: float
     condition: str = ""
     description: str = ""
-    unit_cost: float = 0.0  # per-line unit cost incl. proportional fees
-    lot_id: str = ""        # CSV Inv ID; used to match XML LOTID
-    clean_description: str = ""  # CSV description with seller note suffix removed
+    unit_cost: float = 0.0
+    lot_id: str = ""
+    clean_description: str = ""
+    color_name: str = ""
 
 
 @dataclass
@@ -37,60 +39,84 @@ class Order:
 
     @classmethod
     def from_xml_element(cls, order_elem: ET.Element) -> "Order":
-        order_id = (order_elem.findtext("ORDERID", "") or "").strip()
-        order_date = (order_elem.findtext("ORDERDATE", "") or "").strip()
-        seller = (order_elem.findtext("SELLER", "") or "").strip()
-        order_total = float(order_elem.findtext("ORDERTOTAL", "0") or 0)
-        base_total = float(order_elem.findtext("BASEGRANDTOTAL", "0") or 0)
-        items: List[OrderItem] = []
-        for it in order_elem.findall("ITEM"):
+        """Create Order from XML element."""
+        def get_text(elem: ET.Element, tag: str, default: str = "") -> str:
+            return (elem.findtext(tag, default) or "").strip()
+        
+        def get_float(elem: ET.Element, tag: str, default: float = 0.0) -> float:
+            try:
+                return float(elem.findtext(tag, str(default)) or default)
+            except ValueError:
+                return default
+        
+        def get_int(elem: ET.Element, tag: str, default: int = 0) -> int:
+            try:
+                return int(elem.findtext(tag, str(default)) or default)
+            except ValueError:
+                return default
+
+        items = []
+        for item_elem in order_elem.findall("ITEM"):
+            item_type = get_text(item_elem, "ITEMTYPE")
+            color_id = get_int(item_elem, "COLOR")
+            
+            # Determine color name
+            color_name = (get_color_name(color_id) if item_type == "P" and color_id 
+                         else item_type or "")
+            
             items.append(OrderItem(
-                item_id=(it.findtext("ITEMID", "") or "").strip(),
-                item_type=(it.findtext("ITEMTYPE", "") or "").strip(),
-                color_id=int(it.findtext("COLOR", "0") or 0),
-                qty=int(it.findtext("QTY", "0") or 0),
-                price=float(it.findtext("PRICE", "0") or 0),
-                condition=(it.findtext("CONDITION", "") or "").strip(),
-                description=(it.findtext("DESCRIPTION", "") or "").strip(),
-                # LOTID may exist in real BL XML; keep if present
-                lot_id=(it.findtext("LOTID", "") or "").strip(),
+                item_id=get_text(item_elem, "ITEMID"),
+                item_type=item_type,
+                color_id=color_id,
+                qty=get_int(item_elem, "QTY"),
+                price=get_float(item_elem, "PRICE"),
+                condition=get_text(item_elem, "CONDITION"),
+                description=get_text(item_elem, "DESCRIPTION"),
+                lot_id=get_text(item_elem, "LOTID"),
+                color_name=color_name,
             ))
+
         return cls(
-            order_id=order_id,
-            order_date=order_date,
-            seller=seller,
-            order_total=order_total,
-            base_grand_total=base_total,
-            # XML path doesn't provide the extra CSV-only fields; keep defaults
+            order_id=get_text(order_elem, "ORDERID"),
+            order_date=get_text(order_elem, "ORDERDATE"),
+            seller=get_text(order_elem, "SELLER"),
+            order_total=get_float(order_elem, "ORDERTOTAL"),
+            base_grand_total=get_float(order_elem, "BASEGRANDTOTAL"),
             items=items,
         )
 
     def to_xml_element(self) -> ET.Element:
+        """Convert Order to XML element."""
         order_elem = ET.Element("ORDER")
-
-        def _add(tag: str, text: str):
-            el = ET.SubElement(order_elem, tag)
-            el.text = text
-            return el
-
-        _add("ORDERID", self.order_id)
-        _add("ORDERDATE", self.order_date)
-        _add("SELLER", self.seller)
-        _add("ORDERTOTAL", str(self.order_total))
-        _add("BASEGRANDTOTAL", str(self.base_grand_total))
+        
+        fields = [
+            ("ORDERID", self.order_id),
+            ("ORDERDATE", self.order_date),
+            ("SELLER", self.seller),
+            ("ORDERTOTAL", str(self.order_total)),
+            ("BASEGRANDTOTAL", str(self.base_grand_total))
+        ]
+        
+        for tag, text in fields:
+            ET.SubElement(order_elem, tag).text = text
 
         for item in self.items:
-            it = ET.SubElement(order_elem, "ITEM")
-            ET.SubElement(it, "ITEMID").text = item.item_id
-            ET.SubElement(it, "ITEMTYPE").text = item.item_type
-            ET.SubElement(it, "COLOR").text = str(item.color_id)
-            ET.SubElement(it, "QTY").text = str(item.qty)
-            ET.SubElement(it, "PRICE").text = str(item.price)
-            ET.SubElement(it, "CONDITION").text = item.condition
-            ET.SubElement(it, "DESCRIPTION").text = item.description
-            # Preserve LOTID when present (no harm for merge output)
+            item_elem = ET.SubElement(order_elem, "ITEM")
+            item_fields = [
+                ("ITEMID", item.item_id),
+                ("ITEMTYPE", item.item_type),
+                ("COLOR", str(item.color_id)),
+                ("QTY", str(item.qty)),
+                ("PRICE", str(item.price)),
+                ("CONDITION", item.condition),
+                ("DESCRIPTION", item.description),
+            ]
+            
+            for tag, text in item_fields:
+                ET.SubElement(item_elem, tag).text = text
+                
             if item.lot_id:
-                ET.SubElement(it, "LOTID").text = item.lot_id
+                ET.SubElement(item_elem, "LOTID").text = item.lot_id
 
         return order_elem
 
@@ -98,145 +124,132 @@ class Order:
 # --- helpers ---
 
 def _parse_money(val: Optional[str]) -> float:
-    s = (val or "").strip()
-    # Remove $ and commas
-    s = s.replace("$", "").replace(",", "")
+    """Parse money string to float."""
+    if not val:
+        return 0.0
+    cleaned = val.strip().replace("$", "").replace(",", "")
     try:
-        return float(s) if s else 0.0
+        return float(cleaned) if cleaned else 0.0
     except ValueError:
         return 0.0
 
 
 def _parse_int(val: Optional[str]) -> int:
-    s = (val or "").strip()
+    """Parse string to int."""
+    if not val:
+        return 0
     try:
-        return int(float(s)) if s else 0
+        return int(float(val.strip()))
     except ValueError:
         return 0
 
 
 def _map_item_type(label: str) -> str:
-    lab = (label or "").strip().lower()
-    if lab == "minifigure":
-        return "M"
-    if lab == "part":
-        return "P"
-    if lab == "set":
-        return "S"
-    # Fallback: first letter upper, default 'P' for unknowns to keep color logic consistent
-    return lab[:1].upper() or "P"
+    """Map item type label to code."""
+    type_map = {"minifigure": "M", "part": "P", "set": "S"}
+    return type_map.get((label or "").strip().lower(), 
+                       (label or "").strip()[:1].upper() or "P")
 
 
 def _normalize_spaces(text: str) -> str:
-    """
-    Collapse consecutive whitespace characters into single spaces and trim ends.
-    """
+    """Normalize whitespace in text."""
     return re.sub(r"\s+", " ", (text or "").strip())
 
 
 def _build_xml_indexes() -> Tuple[Dict[Tuple[str, str], int], Dict[Tuple[str, str], str]]:
-    """
-    Build both indexes from XML in a single pass:
-      - color_index: (ORDERID, LOTID) -> COLOR
-      - seller_note_index: (ORDERID, LOTID) -> DESCRIPTION (seller note)
-    """
-    color_index: Dict[Tuple[str, str], int] = {}
-    seller_note_index: Dict[Tuple[str, str], str] = {}
+    """Build color and seller note indexes from XML files."""
+    color_index = {}
+    seller_note_index = {}
 
     if not os.path.exists(ORDERS_DIR):
         return color_index, seller_note_index
 
-    merged_xml_exists = os.path.exists(os.path.join(ORDERS_DIR, 'orders.xml'))
-    for fn in os.listdir(ORDERS_DIR):
-        if not fn.endswith(".xml"):
-            continue
-        if merged_xml_exists and fn != "orders.xml":
-            continue
+    # Prefer merged file if it exists
+    xml_files = ['orders.xml'] if os.path.exists(os.path.join(ORDERS_DIR, 'orders.xml')) else [
+        f for f in os.listdir(ORDERS_DIR) if f.endswith('.xml')
+    ]
+
+    for filename in xml_files:
+        filepath = os.path.join(ORDERS_DIR, filename)
         try:
-            tree = ET.parse(os.path.join(ORDERS_DIR, fn))
-            root = tree.getroot()
-            for order_elem in root.findall("ORDER"):
-                oid = (order_elem.findtext("ORDERID") or "").strip()
-                if not oid:
+            tree = ET.parse(filepath)
+            for order_elem in tree.getroot().findall("ORDER"):
+                order_id = (order_elem.findtext("ORDERID") or "").strip()
+                if not order_id:
                     continue
-                for it in order_elem.findall("ITEM"):
-                    lot_id = (it.findtext("LOTID") or "").strip()
+                    
+                for item_elem in order_elem.findall("ITEM"):
+                    lot_id = (item_elem.findtext("LOTID") or "").strip()
                     if not lot_id:
                         continue
-                    # color id
+                        
+                    key = (order_id, lot_id)
+                    
+                    # Store color ID
                     try:
-                        color_id = int(it.findtext("COLOR", "0") or 0)
+                        color_index[key] = int(item_elem.findtext("COLOR", "0") or 0)
                     except ValueError:
-                        color_id = 0
-                    color_index[(oid, lot_id)] = color_id
-                    # seller note/description
-                    note = (it.findtext("DESCRIPTION") or "").strip()
+                        color_index[key] = 0
+                        
+                    # Store seller note
+                    note = (item_elem.findtext("DESCRIPTION") or "").strip()
                     if note:
-                        seller_note_index[(oid, lot_id)] = note
-        except ET.ParseError:
-            continue
-        except Exception:
+                        seller_note_index[key] = note
+                        
+        except (ET.ParseError, Exception):
             continue
 
     return color_index, seller_note_index
 
 
-def write_minimal_orders_xml(orders: List[Order], output_path: str):
-    """
-    Write a minimal XML capturing only ORDERID and ITEM LOTID for edited orders.
-    This intentionally excludes all other fields.
-    """
+def write_minimal_orders_xml(orders: List[Order], output_path: str) -> None:
+    """Write minimal XML with only order IDs and lot IDs."""
     root = ET.Element("ORDERS")
     for order in orders:
-        o = ET.SubElement(root, "ORDER")
-        ET.SubElement(o, "ORDERID").text = order.order_id
+        order_elem = ET.SubElement(root, "ORDER")
+        ET.SubElement(order_elem, "ORDERID").text = order.order_id
         for item in order.items:
-            if not item.lot_id:
-                continue
-            it = ET.SubElement(o, "ITEM")
-            ET.SubElement(it, "LOTID").text = item.lot_id
+            if item.lot_id:
+                item_elem = ET.SubElement(order_elem, "ITEM")
+                ET.SubElement(item_elem, "LOTID").text = item.lot_id
+                
     tree = ET.ElementTree(root)
     ET.indent(tree, space="  ", level=0)
     tree.write(output_path, encoding="utf-8", xml_declaration=True)
 
 
-def load_orders():
-    """
-    Load BrickLink orders with CSV-first strategy; use XML only to resolve color IDs.
-    Returns:
-      - inventory_list: list[OrderItem] with per-line unit_cost (fees allocated)
-      - orders_list: list[Order] built from CSV with color_id filled from XML by (Order ID, Inv ID)
-    """
-    inventory_list: List[OrderItem] = []
-    orders_list: List[Order] = []
+def load_orders() -> Tuple[List[OrderItem], List[Order]]:
+    """Load orders from CSV files with XML color resolution."""
+    inventory_list = []
+    orders_list = []
 
     if not os.path.exists(ORDERS_DIR):
         return inventory_list, orders_list
 
-    merged_csv_exists = os.path.exists(os.path.join(ORDERS_DIR, 'orders.csv'))
-
-    # Build indices from XML in a single pass
+    # Build XML indexes
     xml_color_index, xml_seller_note_index = _build_xml_indexes()
+    
+    # Prefer merged file if it exists
+    csv_files = ['orders.csv'] if os.path.exists(os.path.join(ORDERS_DIR, 'orders.csv')) else [
+        f for f in os.listdir(ORDERS_DIR) if f.endswith('.csv')
+    ]
 
-    current_order: Optional[Order] = None
-    # Parse CSV, build orders and items
-    for fn in os.listdir(ORDERS_DIR):
-        if not fn.endswith(".csv"):
-            continue
-        if merged_csv_exists and fn != "orders.csv":
-            continue
-
-        with open(os.path.join(ORDERS_DIR, fn), newline='', encoding='utf-8') as f:
+    current_order = None
+    
+    for filename in csv_files:
+        filepath = os.path.join(ORDERS_DIR, filename)
+        with open(filepath, newline='', encoding='utf-8') as f:
             reader = csv.DictReader(f)
             for row in reader:
                 order_id = (row.get("Order ID") or "").strip()
                 item_number = (row.get("Item Number") or "").strip()
 
                 if order_id:
-                    # Close previous order if switching
+                    # Save previous order
                     if current_order and current_order.items:
                         orders_list.append(current_order)
-                    # Start new order using CSV header fields
+                        
+                    # Create new order
                     current_order = Order(
                         order_id=order_id,
                         order_date=(row.get("Order Date") or "").strip(),
@@ -248,50 +261,46 @@ def load_orders():
                         total_lots=_parse_int(row.get("Total Lots")),
                         total_items=_parse_int(row.get("Total Items")),
                         tracking_no=(row.get("Tracking No") or "").strip(),
-                        items=[],
                     )
                     continue
 
-                # Item rows: must have Item Number
+                # Process item rows
                 if not current_order or not item_number:
                     continue
 
-                # Extract item fields from CSV
-                cond = (row.get("Condition") or "").strip()
-                csv_desc_raw = (row.get("Item Description") or "")
-                csv_desc = _normalize_spaces(csv_desc_raw)  # normalized full description for Orders sheet
-                qty = _parse_int(row.get("Qty"))
-                price = _parse_money(row.get("Each"))
-                item_type_label = (row.get("Item Type") or "").strip()
-                type_code = _map_item_type(item_type_label)
+                # Extract item data
+                type_code = _map_item_type(row.get("Item Type", ""))
                 lot_id = (row.get("Inv ID") or "").strip()
-
+                csv_desc_raw = row.get("Item Description", "")
+                csv_desc = _normalize_spaces(csv_desc_raw)
+                
+                # Get color ID from XML
                 color_id = 0
                 if type_code == "P" and lot_id:
                     color_id = xml_color_index.get((current_order.order_id, lot_id), 0)
 
-                # Clean description for inventory by removing seller note suffix using RAW text, then normalize spaces
-                seller_note_raw = xml_seller_note_index.get((current_order.order_id, lot_id), "")
-                if seller_note_raw:
-                    raw = (csv_desc_raw or "").rstrip()
-                    note = seller_note_raw.strip()
-                    if raw.endswith(note):
-                        stripped = raw[: -len(note)].rstrip(" -")
-                        clean_desc = _normalize_spaces(stripped)
-                    else:
-                        clean_desc = csv_desc
-                else:
-                    clean_desc = csv_desc
+                # Determine color name
+                color_name = (get_color_name(color_id) if type_code == "P" and color_id 
+                             else type_code)
 
-                # Compute unit_cost with proportional fees based on order header totals
-                order_total = current_order.order_total or 0.0
-                base_total = current_order.base_grand_total or 0.0
-                total_fees = base_total - order_total
-                line_total = float(qty) * float(price)
-                share = (line_total / order_total) if order_total else 0.0
-                fee_share = total_fees * share
-                total_with_fees = line_total + fee_share
-                unit_cost = (total_with_fees / qty) if qty else 0.0
+                # Clean description by removing seller note
+                seller_note = xml_seller_note_index.get((current_order.order_id, lot_id), "")
+                clean_desc = csv_desc
+                if seller_note and csv_desc_raw.rstrip().endswith(seller_note.strip()):
+                    stripped = csv_desc_raw.rstrip()[:-len(seller_note.strip())].rstrip(" -")
+                    clean_desc = _normalize_spaces(stripped)
+
+                # Calculate unit cost with proportional fees
+                qty = _parse_int(row.get("Qty"))
+                price = _parse_money(row.get("Each"))
+                line_total = qty * price
+                
+                if current_order.order_total:
+                    fee_share = ((current_order.base_grand_total - current_order.order_total) * 
+                               line_total / current_order.order_total)
+                    unit_cost = (line_total + fee_share) / qty if qty else 0.0
+                else:
+                    unit_cost = price
 
                 item = OrderItem(
                     item_id=item_number,
@@ -299,17 +308,18 @@ def load_orders():
                     color_id=color_id if type_code == "P" else 0,
                     qty=qty,
                     price=price,
-                    condition=cond,
-                    description=csv_desc,           # normalized full CSV description for Orders sheet
-                    clean_description=clean_desc,   # normalized cleaned description for inventory sheets
+                    condition=(row.get("Condition") or "").strip()[0],
+                    description=csv_desc,
+                    clean_description=clean_desc,
                     unit_cost=unit_cost,
                     lot_id=lot_id,
+                    color_name=color_name,
                 )
+                
                 current_order.items.append(item)
-                # Add to inventory list (flat list of per-line items)
                 inventory_list.append(item)
 
-    # Append the last order if present
+    # Add final order
     if current_order and current_order.items:
         orders_list.append(current_order)
 

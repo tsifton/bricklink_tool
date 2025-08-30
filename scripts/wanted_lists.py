@@ -32,6 +32,8 @@ def parse_wanted_lists() -> List[WantedList]:
         if not fn.endswith(".xml"):
             continue
         title = os.path.splitext(fn)[0]
+        if title.lower().startswith("lego"):
+            title = title[4:].strip()
         tree = ET.parse(os.path.join(WANTED_LISTS_DIR, fn))
         root = tree.getroot()
         wl_items: List[RequiredItem] = []
