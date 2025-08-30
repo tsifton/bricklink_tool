@@ -193,7 +193,13 @@ def merge_csv():
     for row in final_rows:
         row.pop('_parsed_date', None)
         row.pop('_item_key', None)
-    
+
+    # Filter out any keys not in headers to avoid ValueError
+    for row in final_rows:
+        keys_to_remove = [k for k in row if k not in headers]
+        for k in keys_to_remove:
+            row.pop(k)
+
     # Write merged CSV file
     if headers and final_rows:
         output_path = os.path.join(ORDERS_DIR, 'orders.csv')
