@@ -64,12 +64,12 @@ class TestFullSheetEditing(unittest.TestCase):
         """Create a test CSV order file."""
         with open(os.path.join(self.test_dir, filename), 'w', newline='', encoding='utf-8') as f:
             writer = csv.DictWriter(f, fieldnames=[
-                'Order Number', 'Order Date', 'Item Number', 'Item Description',
+                'Order ID', 'Order Date', 'Item Number', 'Item Description',
                 'Color ID', 'Qty', 'Each', 'Total', 'Condition'
             ])
             writer.writeheader()
             writer.writerow({
-                'Order Number': order_id,
+                'Order ID': order_id,
                 'Order Date': order_date,
                 'Item Number': item_id,
                 'Item Description': 'Test Brick Description',
@@ -332,23 +332,23 @@ class TestFullSheetEditing(unittest.TestCase):
         csv_file = os.path.join(self.test_dir, 'orders.csv')
         with open(csv_file, 'w', newline='', encoding='utf-8') as f:
             writer = csv.DictWriter(f, fieldnames=[
-                'Order Number', 'Order Date', 'Item Number', 'Qty'
+                'Order ID', 'Order Date', 'Item Number', 'Qty'
             ])
             writer.writeheader()
             writer.writerow({
-                'Order Number': '12345',
+                'Order ID': '12345',
                 'Order Date': '2024-01-01',
                 'Item Number': '3001',
                 'Qty': '10'
             })
             writer.writerow({
-                'Order Number': '12345',
+                'Order ID': '12345',
                 'Order Date': '2024-01-01', 
                 'Item Number': '3002',
                 'Qty': '5'
             })
             writer.writerow({
-                'Order Number': '67890',
+                'Order ID': '67890',
                 'Order Date': '2024-01-02',
                 'Item Number': '4001', 
                 'Qty': '3'
@@ -366,7 +366,7 @@ class TestFullSheetEditing(unittest.TestCase):
         
         # Should have only one row left
         self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]['Order Number'], '12345')
+        self.assertEqual(rows[0]['Order ID'], '12345')
         self.assertEqual(rows[0]['Item Number'], '3001')
 
     def test_update_orders_sheet_preserves_all_edits(self):

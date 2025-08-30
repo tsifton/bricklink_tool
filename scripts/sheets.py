@@ -336,9 +336,19 @@ def _update_csv_files(sheet_edits, orders_dir):
         
         # Update rows with sheet edits
         updated_rows = []
+        current_order_id = ""
+        
         for row in rows:
-            order_id = row.get('Order Number', '').strip()
+            # Use 'Order ID' as that's what the CSV files actually use
+            row_order_id = row.get('Order ID', '').strip()
             item_number = row.get('Item Number', '').strip()
+            
+            # Handle CSV format where item rows have empty Order ID
+            if row_order_id:
+                current_order_id = row_order_id
+                order_id = row_order_id
+            else:
+                order_id = current_order_id
             
             # Create key to match sheet edits
             key = (order_id, item_number) if item_number else (order_id, "")
@@ -348,7 +358,7 @@ def _update_csv_files(sheet_edits, orders_dir):
                 
                 # Map Google Sheet column names to CSV column names
                 field_mapping = {
-                    'Order ID': 'Order Number',
+                    'Order ID': 'Order ID',  # CSV uses 'Order ID', not 'Order Number'
                     'Item Number': 'Item Number', 
                     'Item Description': 'Item Description',
                     'Color': 'Color',  # May need color ID mapping
@@ -578,11 +588,21 @@ def _remove_from_csv_files(deleted_keys, orders_dir):
         
         # Filter out deleted rows
         filtered_rows = []
+        current_order_id = ""
+        
         for row in rows:
-            order_id = row.get('Order Number', '').strip()
+            # Use 'Order ID' as that's what the CSV files actually use
+            row_order_id = row.get('Order ID', '').strip()
             item_number = row.get('Item Number', '').strip()
             
-            # Create key to match deleted keys
+            # Handle CSV format where item rows have empty Order ID
+            if row_order_id:
+                current_order_id = row_order_id
+                order_id = row_order_id
+            else:
+                order_id = current_order_id
+            
+            # Create key to match deleted keys  
             key = (order_id, item_number) if item_number else (order_id, "")
             
             # Keep row if it's not in deleted keys
