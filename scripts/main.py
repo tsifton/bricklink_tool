@@ -9,8 +9,7 @@ from sheets import (
     update_orders_sheet,
     read_orders_sheet_edits,
     detect_changes_before_merge,
-    save_edits_to_files,
-    remove_deleted_orders_from_files
+    apply_saved_changes_to_files
 )
 import merge_orders
 
@@ -33,14 +32,8 @@ def main():
     merge_orders.merge_xml()
     merge_orders.merge_csv()
     
-    # Save any edits back to files after merging
-    if sheet_edits:
-        save_edits_to_files(sheet_edits, "orders")
-    
-    # Remove deleted orders from files
-    if changes and changes.get('deletions'):
-        deleted_keys = [change['key'] for change in changes['deletions']]
-        remove_deleted_orders_from_files(deleted_keys, "orders")
+    # Apply all saved changes (edits, additions, deletions) to merged files
+    apply_saved_changes_to_files(changes, "orders")
 
     # Load inventory (list[OrderItem]) and orders (list[Order])
     inv_list, orders_list = load_orders()
