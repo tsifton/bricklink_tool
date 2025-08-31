@@ -58,11 +58,77 @@ class TestChangeDetection(unittest.TestCase):
         
         with open(os.path.join(self.orders_dir, filename), 'w', encoding='utf-8') as f:
             f.write(xml_content)
+
+    def create_test_csv(self, filename="orders.csv", order_id="12345", 
+                       order_date="2024-01-01T10:30:00.000Z", seller="TestSeller",
+                       item_id="3001", qty=10, price=2.50):
+        """Create a test CSV order file."""
+        import csv
+        csv_path = os.path.join(self.orders_dir, filename)
+        with open(csv_path, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=[
+                'Order ID', 'Order Date', 'Seller', 'Shipping', 'Add Chrg 1',
+                'Order Total', 'Base Grand Total', 'Total Lots', 'Total Items',
+                'Tracking No', 'Item Number', 'Item Description', 'Color ID',
+                'Qty', 'Each', 'Total', 'Condition', 'Inv ID', 'Item Type'
+            ])
+            writer.writeheader()
+            
+            # Order header row
+            writer.writerow({
+                'Order ID': order_id,
+                'Order Date': order_date,
+                'Seller': seller,
+                'Shipping': '0.0',
+                'Add Chrg 1': '0.0',
+                'Order Total': str(qty * price),
+                'Base Grand Total': str(qty * price + 2.50),
+                'Total Lots': '1',
+                'Total Items': str(qty),
+                'Tracking No': '',
+                'Item Number': '',
+                'Item Description': '',
+                'Color ID': '',
+                'Qty': '',
+                'Each': '',
+                'Total': '',
+                'Condition': '',
+                'Inv ID': '',
+                'Item Type': ''
+            })
+            
+            # Item row
+            writer.writerow({
+                'Order ID': '',
+                'Order Date': '',
+                'Seller': '',
+                'Shipping': '',
+                'Add Chrg 1': '',
+                'Order Total': '',
+                'Base Grand Total': '',
+                'Total Lots': '',
+                'Total Items': '',
+                'Tracking No': '',
+                'Item Number': item_id,
+                'Item Description': 'Test Brick',
+                'Color ID': '4',
+                'Qty': str(qty),
+                'Each': str(price),
+                'Total': str(qty * price),
+                'Condition': 'N',
+                'Inv ID': '',
+                'Item Type': 'part'
+            })
+
+    def create_test_files(self, **kwargs):
+        """Create both XML and CSV test files for complete testing."""
+        self.create_test_xml(**kwargs)
+        self.create_test_csv(**kwargs)
     
     def test_no_changes_detected(self):
         """Test that no changes are detected when sheet and files match."""
-        # Create test order file
-        self.create_test_xml()
+        # Create test order files (both XML and CSV)
+        self.create_test_files()
         
         # Create matching sheet edits (no actual changes)
         sheet_edits = {
@@ -77,8 +143,8 @@ class TestChangeDetection(unittest.TestCase):
             ("12345", "3001"): {
                 "Order ID": "12345", 
                 "Item Number": "3001",
-                "Item Description": "",
-                "Color": "Red",
+                "Item Description": "Test Brick",  # Match what load_orders produces
+                "Color": "P",  # This should match what load_orders produces
                 "Condition": "N",
                 "Qty": "10",
                 "Each": "2.5",
@@ -95,8 +161,8 @@ class TestChangeDetection(unittest.TestCase):
     
     def test_edits_detected(self):
         """Test that edits are properly detected."""
-        # Create test order file
-        self.create_test_xml()
+        # Create test order files (both XML and CSV)
+        self.create_test_files()
         
         # Create sheet edits with changes
         sheet_edits = {
@@ -112,7 +178,7 @@ class TestChangeDetection(unittest.TestCase):
                 "Order ID": "12345",
                 "Item Number": "3001", 
                 "Item Description": "",
-                "Color": "Red",
+                "Color": "P",  # Changed to match load_orders output
                 "Condition": "U",  # Changed from N
                 "Qty": "12",  # Changed from 10
                 "Each": "2.5",
@@ -134,8 +200,8 @@ class TestChangeDetection(unittest.TestCase):
     
     def test_additions_detected(self):
         """Test that additions are properly detected.""" 
-        # Create test order file
-        self.create_test_xml()
+        # Create test order files (both XML and CSV)
+        self.create_test_files()
         
         # Create sheet edits with original data plus additional entry
         sheet_edits = {
