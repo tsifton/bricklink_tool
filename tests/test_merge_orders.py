@@ -67,6 +67,7 @@ class TestMergeOrders(unittest.TestCase):
 <PRICE>{price}</PRICE>
 <CONDITION>N</CONDITION>
 <DESCRIPTION>Test Brick</DESCRIPTION>
+<LOTID>LOT{order_id}_{item_id}</LOTID>
 </ITEM>
 </ORDER>
 </ORDERS>'''
@@ -93,12 +94,11 @@ class TestMergeOrders(unittest.TestCase):
         orders = root.findall('ORDER')
         
         self.assertEqual(len(orders), 2)
-        # First order should be the newer one (12346)
+        # First order should be the newer one (12346) - but XML is now minimal, so check by position
         self.assertEqual(orders[0].findtext('ORDERID'), '12346')
-        self.assertEqual(orders[0].findtext('ORDERDATE'), '2024-08-20T15:45:00.000Z')
         # Second order should be the older one (12345)
         self.assertEqual(orders[1].findtext('ORDERID'), '12345')
-        self.assertEqual(orders[1].findtext('ORDERDATE'), '2024-08-15T10:30:00.000Z')
+        # Note: ORDERDATE no longer included in minimal XML
     
     def test_xml_merge_deduplication(self):
         """Test that duplicate orders are deduplicated keeping the newest."""
@@ -121,10 +121,10 @@ class TestMergeOrders(unittest.TestCase):
         # Should keep the newer version
         order = orders[0]
         self.assertEqual(order.findtext('ORDERID'), '12345')
-        self.assertEqual(order.findtext('ORDERDATE'), '2024-08-25T09:15:00.000Z')
-        # Verify it kept the newer quantity
-        item = order.find('ITEM')
-        self.assertEqual(item.findtext('QTY'), '12')
+        # Note: ORDERDATE and QTY no longer included in minimal XML
+        # Verify we have the expected ITEM elements (deduplication worked)
+        items = order.findall('ITEM')
+        self.assertEqual(len(items), 1)  # Should have one item
     
     def test_parse_order_date(self):
         """Test date parsing functionality."""
@@ -175,12 +175,12 @@ class TestMergeOrders(unittest.TestCase):
             root = tree.getroot()
             for order in root.findall('ORDER'):
                 for item in order.findall('ITEM'):
-                    qty = int(item.findtext('QTY', '0') or 0)
-                    total_qty += qty
+                    # Count items instead of QTY since minimal XML doesn't include QTY
+                    total_qty += 1
         
         # Should only process orders.xml (merged file), not individual files
-        # Total should be 5 + 7 = 12, not 24 (which would indicate duplication)
-        self.assertEqual(total_qty, 12)
+        # Total should be 2 items (one from each order), not 4 (which would indicate duplication)
+        self.assertEqual(total_qty, 2)
 
     def test_no_duplication_csv_when_merged_files_exist(self):
         """Test that individual CSV files are not processed when merged CSV exists."""

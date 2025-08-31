@@ -20,6 +20,7 @@ from sheets import (
     remove_deleted_orders_from_files,
     update_orders_sheet
 )
+from orders import Order, OrderItem
 
 
 class TestFullSheetEditing(unittest.TestCase):
@@ -394,52 +395,35 @@ class TestFullSheetEditing(unittest.TestCase):
             }
         }
         
-        # Mock order rows from the system
-        order_rows = [
-            {
-                "Order ID": "12345",
-                "Seller": "OriginalSeller",  # Should be replaced
-                "Order Date": "2024-01-01",  # Should be replaced
-                "Shipping": "",
-                "Add Chrg 1": "",
-                "Order Total": "25.00",  # Should be replaced
-                "Base Grand Total": "26.50",
-                "Total Lots": "",
-                "Total Items": "",
-                "Tracking No": "",  # Should be replaced
-                "Condition": "",
-                "Item Number": "",
-                "Item Description": "",
-                "Color": "",
-                "Qty": "",
-                "Each": "",
-                "Total": ""
-            },
-            {
-                "Order ID": "12345",
-                "Seller": "",
-                "Order Date": "",
-                "Shipping": "",
-                "Add Chrg 1": "",
-                "Order Total": "",
-                "Base Grand Total": "",
-                "Total Lots": "",
-                "Total Items": "",
-                "Tracking No": "",
-                "Condition": "N",  # Should be replaced
-                "Item Number": "3001",
-                "Item Description": "Original Description",  # Should be replaced
-                "Color": "Red",
-                "Qty": "10",  # Should be replaced
-                "Each": "2.50",  # Should be replaced
-                "Total": "25.00"
-            }
+        # Create Order objects instead of dictionaries  
+        orders = [
+            Order(
+                order_id="12345",
+                order_date="2024-01-01T10:30:00.000Z",  # Should be replaced
+                seller="OriginalSeller",  # Should be replaced
+                order_total=25.0,  # Should be replaced
+                base_grand_total=26.5,
+                shipping=0.0,
+                tracking_no="",  # Should be replaced
+                items=[
+                    OrderItem(
+                        item_id="3001",
+                        item_type="P",
+                        color_id=4,
+                        qty=10,  # Should be replaced
+                        price=2.5,  # Should be replaced
+                        condition="N",  # Should be replaced
+                        description="Original Description",  # Should be replaced
+                        color_name="Red"
+                    )
+                ]
+            )
         ]
         
         with patch('sheets.get_or_create_worksheet', return_value=mock_ws), \
              patch('sheets.read_orders_sheet_edits', return_value=existing_edits):
             
-            update_orders_sheet(mock_sheet, order_rows)
+            update_orders_sheet(mock_sheet, orders)
             
             # Verify ws.update was called
             mock_ws.update.assert_called_once()
@@ -463,19 +447,25 @@ class TestFullSheetEditing(unittest.TestCase):
             self.assertEqual(first_data_row[seller_index], "EditedSeller")
             self.assertEqual(first_data_row[order_date_index], "2024-02-01")
             self.assertEqual(first_data_row[order_total_index], "30.00")
-            self.assertEqual(first_data_row[tracking_index], "1Z123456789")
-            
-            # Check that user edits were applied to the second row (item row)
-            second_data_row = values[2]
+            # Check that user edits were applied to the data row (both order and item edits)
+            first_data_row = values[1]
+            seller_index = headers.index("Seller")
+            order_date_index = headers.index("Order Date") 
+            order_total_index = headers.index("Order Total")
+            tracking_index = headers.index("Tracking No")
             condition_index = headers.index("Condition")
             description_index = headers.index("Item Description")
             qty_index = headers.index("Qty")
             each_index = headers.index("Each")
             
-            self.assertEqual(second_data_row[condition_index], "U")
-            self.assertEqual(second_data_row[description_index], "Edited Description")
-            self.assertEqual(second_data_row[qty_index], "12")
-            self.assertEqual(second_data_row[each_index], "3.00")
+            self.assertEqual(first_data_row[seller_index], "EditedSeller")
+            self.assertEqual(first_data_row[order_date_index], "2024-02-01")
+            self.assertEqual(first_data_row[order_total_index], "30.00")
+            self.assertEqual(first_data_row[tracking_index], "1Z123456789")
+            self.assertEqual(first_data_row[condition_index], "U")
+            self.assertEqual(first_data_row[description_index], "Edited Description")
+            self.assertEqual(first_data_row[qty_index], "12")
+            self.assertEqual(first_data_row[each_index], "3.00")
 
 
 if __name__ == '__main__':

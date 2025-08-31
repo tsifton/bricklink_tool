@@ -1,6 +1,9 @@
 import gspread
+import os
+import csv
+import xml.etree.ElementTree as ET
 from collections import defaultdict
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from config import get_or_create_worksheet, LEFTOVERS_TAB_NAME
 
 # Constants
@@ -10,14 +13,11 @@ SUMMARY_HEADERS = [
     "75%", "100%", "125%", "150%"
 ]
 ORDERS_HEADERS = [
-    "Order ID", "Seller", "Order Date", "Shipping", "Add Chrg",
-    "Subtotal", "Order Total", "Total Lots", "Total Items",
-    "Tracking #", "Condition", "Item #", "Description",
-    "Color", "Qty", "Each", "Total"
+    "Order ID","Seller","Order Date","Shipping","Add Chrg 1","Order Total","Base Grand Total","Total Lots","Total Items","Tracking No","Condition","Item Number","Item Description","Color","Qty","Each","Total"
 ]
 ORDER_LEVEL_FIELDS = [
-    "Order ID", "Seller", "Order Date", "Shipping", "Add Chrg",
-    "Subtotal", "Order Total", "Total Lots", "Total Items", "Tracking #"
+    "Order ID", "Seller", "Order Date", "Shipping", "Add Chrg 1",
+    "Order Total", "Base Grand Total", "Total Lots", "Total Items", "Tracking No"
 ]
 
 def update_summary(sheet, summary_rows: List[List[Any]]) -> None:
@@ -147,7 +147,7 @@ def read_orders_sheet_edits(sheet) -> Dict[tuple, Dict[str, Any]]:
 
         for record in records:
             row_order_id = record.get("Order ID", "")
-            item_number = record.get("Item #", "") or record.get("Item Number", "")
+            item_number = record.get("Item Number", "")
 
             order_id = row_order_id if row_order_id else current_order_id
             if row_order_id:
@@ -205,15 +205,15 @@ def update_orders_sheet(sheet, orders) -> None:
                 "Seller": order.seller if is_first_item else "",
                 "Order Date": order.order_date if is_first_item else "",
                 "Shipping": order.shipping if is_first_item else "",
-                "Add Chrg": order.add_chrg_1 if is_first_item else "",
-                "Subtotal": order.order_total if is_first_item else "",
-                "Order Total": order.base_grand_total if is_first_item else "",
+                "Add Chrg 1": order.add_chrg_1 if is_first_item else "",
+                "Order Total": order.order_total if is_first_item else "",
+                "Base Grand Total": order.base_grand_total if is_first_item else "",
                 "Total Lots": order.total_lots if is_first_item else "",
                 "Total Items": order.total_items if is_first_item else "",
-                "Tracking #": order.tracking_no if is_first_item else "",
+                "Tracking No": order.tracking_no if is_first_item else "",
                 "Condition": item.condition,
-                "Item #": item.item_id,
-                "Description": desc,
+                "Item Number": item.item_id,
+                "Item Description": desc,
                 "Color": getattr(item, 'color_name', item.item_type),
                 "Qty": item.qty,
                 "Each": item.price,
@@ -222,6 +222,17 @@ def update_orders_sheet(sheet, orders) -> None:
 
             # Apply user edits
             key_item = (order.order_id, item.item_id)
+            key_order = (order.order_id, "")
+            
+            # Apply order-level edits (for first item row only)
+            if is_first_item and key_order in existing_edits:
+                user_record = existing_edits[key_order]
+                for field in ORDERS_HEADERS:
+                    val = user_record.get(field, '')
+                    if str(val).strip():
+                        item_dict[field] = val
+            
+            # Apply item-level edits
             if key_item in existing_edits:
                 user_record = existing_edits[key_item]
                 for field in ORDERS_HEADERS:
@@ -229,15 +240,305 @@ def update_orders_sheet(sheet, orders) -> None:
                     if str(val).strip():
                         item_dict[field] = val
                 
-                # Keep order fields blank for non-first rows
-                if not is_first_item:
-                    for field in ORDER_LEVEL_FIELDS:
-                        item_dict[field] = ""
+            # Keep order fields blank for non-first rows
+            if not is_first_item:
+                for field in ORDER_LEVEL_FIELDS:
+                    item_dict[field] = ""
 
             data_rows.append([item_dict.get(col, '') for col in ORDERS_HEADERS])
 
     values = [ORDERS_HEADERS] + data_rows
     ws.update(values=values, range_name="A1")
     _format_currency_columns(ws, ORDERS_HEADERS, 
-                           ["Shipping", "Add Chrg", "Subtotal", "Order Total", "Each", "Total"], 
+                           ["Shipping", "Add Chrg 1", "Order Total", "Base Grand Total", "Each", "Total"], 
                            len(values))
+
+
+def detect_changes_before_merge(sheet_edits: Optional[Dict[tuple, Dict[str, Any]]], orders_dir: str) -> Dict[str, List[Dict[str, Any]]]:
+    """Detect changes between sheet edits and existing order files before merging."""
+    if not sheet_edits:
+        return {'edits': [], 'additions': [], 'deletions': []}
+    
+    # Load existing order data from files
+    existing_orders = {}
+    
+    if os.path.exists(orders_dir):
+        # Check for XML files first
+        xml_files = ['orders.xml'] if os.path.exists(os.path.join(orders_dir, 'orders.xml')) else [
+            f for f in os.listdir(orders_dir) if f.endswith('.xml')
+        ]
+        
+        for filename in xml_files:
+            filepath = os.path.join(orders_dir, filename)
+            try:
+                tree = ET.parse(filepath)
+                for order_elem in tree.getroot().findall("ORDER"):
+                    order_id = (order_elem.findtext("ORDERID") or "").strip()
+                    if not order_id:
+                        continue
+                    
+                    # Store order header info
+                    existing_orders[(order_id, "")] = {
+                        "Order ID": order_id,
+                        "Seller": (order_elem.findtext("SELLER") or "").strip(),
+                        "Order Date": (order_elem.findtext("ORDERDATE") or "").strip(),
+                        "Order Total": (order_elem.findtext("ORDERTOTAL") or "").strip(),
+                        "Base Grand Total": (order_elem.findtext("BASEGRANDTOTAL") or "").strip(),
+                        "Item Number": ""
+                    }
+                    
+                    # Store item info
+                    for item_elem in order_elem.findall("ITEM"):
+                        item_id = (item_elem.findtext("ITEMID") or "").strip()
+                        if item_id:
+                            existing_orders[(order_id, item_id)] = {
+                                "Order ID": order_id,
+                                "Item Number": item_id,
+                                "Item Description": (item_elem.findtext("DESCRIPTION") or "").strip(),
+                                "Color": (item_elem.findtext("COLOR") or "").strip(),
+                                "Condition": (item_elem.findtext("CONDITION") or "").strip(),
+                                "Qty": (item_elem.findtext("QTY") or "").strip(),
+                                "Each": (item_elem.findtext("PRICE") or "").strip(),
+                                "Total": ""
+                            }
+            except (ET.ParseError, Exception):
+                continue
+    
+    changes = {'edits': [], 'additions': [], 'deletions': []}
+    
+    # Check for edits and additions
+    for key, sheet_data in sheet_edits.items():
+        order_id, item_number = key
+        if key in existing_orders:
+            # Compare with existing data to detect edits - only check meaningful fields
+            existing_data = existing_orders[key]
+            has_changes = False
+            
+            # Define which fields to check for changes
+            fields_to_check = ["Seller", "Order Date", "Order Total", "Base Grand Total"] if not item_number else [
+                "Item Description", "Condition", "Qty", "Each"  # Exclude Color since XML stores IDs, sheets show names
+            ]
+            
+            for field in fields_to_check:
+                sheet_val = str(sheet_data.get(field, "")).strip()
+                existing_val = str(existing_data.get(field, "")).strip()
+                if sheet_val and sheet_val != existing_val:
+                    has_changes = True
+                    break
+            
+            if has_changes:
+                changes['edits'].append({
+                    'key': key,
+                    'order_id': order_id,
+                    'item_number': item_number,
+                    'changes': sheet_data
+                })
+        else:
+            # Not in existing files = addition
+            changes['additions'].append({
+                'key': key,
+                'order_id': order_id,
+                'item_number': item_number,
+                'data': sheet_data
+            })
+    
+    # Check for deletions
+    for key in existing_orders:
+        if key not in sheet_edits:
+            order_id, item_number = key
+            changes['deletions'].append({
+                'key': key,
+                'order_id': order_id,
+                'item_number': item_number
+            })
+    
+    return changes
+
+
+def save_edits_to_files(sheet_edits: Dict[tuple, Dict[str, Any]], orders_dir: str) -> None:
+    """Save edited data back to order files."""
+    if not sheet_edits or not os.path.exists(orders_dir):
+        return
+    
+    # Update XML files
+    xml_files = ['orders.xml'] if os.path.exists(os.path.join(orders_dir, 'orders.xml')) else [
+        f for f in os.listdir(orders_dir) if f.endswith('.xml')
+    ]
+    
+    for filename in xml_files:
+        filepath = os.path.join(orders_dir, filename)
+        try:
+            tree = ET.parse(filepath)
+            root = tree.getroot()
+            
+            for order_elem in root.findall("ORDER"):
+                order_id = (order_elem.findtext("ORDERID") or "").strip()
+                if not order_id:
+                    continue
+                
+                # Update order-level fields
+                order_key = (order_id, "")
+                if order_key in sheet_edits:
+                    edits = sheet_edits[order_key]
+                    if "Seller" in edits and edits["Seller"].strip():
+                        order_elem.find("SELLER").text = edits["Seller"]
+                    if "Order Date" in edits and edits["Order Date"].strip():
+                        order_elem.find("ORDERDATE").text = edits["Order Date"]
+                    if "Order Total" in edits and edits["Order Total"].strip():
+                        order_elem.find("ORDERTOTAL").text = edits["Order Total"]
+                    if "Base Grand Total" in edits and edits["Base Grand Total"].strip():
+                        order_elem.find("BASEGRANDTOTAL").text = edits["Base Grand Total"]
+                
+                # Update item-level fields
+                for item_elem in order_elem.findall("ITEM"):
+                    item_id = (item_elem.findtext("ITEMID") or "").strip()
+                    item_key = (order_id, item_id)
+                    
+                    if item_key in sheet_edits:
+                        edits = sheet_edits[item_key]
+                        if "Condition" in edits and edits["Condition"].strip():
+                            item_elem.find("CONDITION").text = edits["Condition"]
+                        if "Qty" in edits and edits["Qty"].strip():
+                            item_elem.find("QTY").text = edits["Qty"]
+                        if "Each" in edits and edits["Each"].strip():
+                            item_elem.find("PRICE").text = edits["Each"]
+                        if "Item Description" in edits and edits["Item Description"].strip():
+                            item_elem.find("DESCRIPTION").text = edits["Item Description"]
+            
+            # Write back to file
+            ET.indent(tree, space="  ", level=0)
+            tree.write(filepath, encoding='utf-8', xml_declaration=True)
+            
+        except (ET.ParseError, Exception):
+            continue
+    
+    # Update CSV files
+    csv_files = ['orders.csv'] if os.path.exists(os.path.join(orders_dir, 'orders.csv')) else [
+        f for f in os.listdir(orders_dir) if f.endswith('.csv')
+    ]
+    
+    for filename in csv_files:
+        filepath = os.path.join(orders_dir, filename)
+        try:
+            # Read existing CSV
+            rows = []
+            with open(filepath, 'r', newline='', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                fieldnames = reader.fieldnames
+                for row in reader:
+                    order_id = (row.get("Order ID") or "").strip()
+                    item_number = (row.get("Item Number") or "").strip()
+                    key = (order_id, item_number)
+                    
+                    # Apply edits if they exist
+                    if key in sheet_edits:
+                        edits = sheet_edits[key]
+                        for field, value in edits.items():
+                            if field in row and str(value).strip():
+                                row[field] = value
+                    
+                    rows.append(row)
+            
+            # Write back to file
+            with open(filepath, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(rows)
+                
+        except Exception:
+            continue
+
+
+def detect_deleted_orders(original_rows: List[Dict[str, Any]], sheet_edits: Dict[tuple, Dict[str, Any]]) -> List[Tuple[str, str]]:
+    """Detect orders/items that were deleted from the sheet."""
+    deleted_keys = []
+    
+    for row in original_rows:
+        order_id = (row.get("Order ID") or "").strip()
+        item_number = (row.get("Item Number") or "").strip()
+        key = (order_id, item_number)
+        
+        if key not in sheet_edits:
+            deleted_keys.append(key)
+    
+    return deleted_keys
+
+
+def remove_deleted_orders_from_files(deleted_keys: List[Tuple[str, str]], orders_dir: str) -> None:
+    """Remove deleted orders/items from order files."""
+    if not deleted_keys or not os.path.exists(orders_dir):
+        return
+    
+    # Process XML files
+    xml_files = ['orders.xml'] if os.path.exists(os.path.join(orders_dir, 'orders.xml')) else [
+        f for f in os.listdir(orders_dir) if f.endswith('.xml')
+    ]
+    
+    for filename in xml_files:
+        filepath = os.path.join(orders_dir, filename)
+        try:
+            tree = ET.parse(filepath)
+            root = tree.getroot()
+            
+            # Remove orders and items based on deleted keys
+            orders_to_remove = []
+            for order_elem in root.findall("ORDER"):
+                order_id = (order_elem.findtext("ORDERID") or "").strip()
+                
+                # Check if entire order should be deleted
+                if (order_id, "") in deleted_keys:
+                    orders_to_remove.append(order_elem)
+                    continue
+                
+                # Remove specific items
+                items_to_remove = []
+                for item_elem in order_elem.findall("ITEM"):
+                    item_id = (item_elem.findtext("ITEMID") or "").strip()
+                    if (order_id, item_id) in deleted_keys:
+                        items_to_remove.append(item_elem)
+                
+                for item_elem in items_to_remove:
+                    order_elem.remove(item_elem)
+            
+            # Remove entire orders
+            for order_elem in orders_to_remove:
+                root.remove(order_elem)
+            
+            # Write back to file
+            ET.indent(tree, space="  ", level=0)
+            tree.write(filepath, encoding='utf-8', xml_declaration=True)
+            
+        except (ET.ParseError, Exception):
+            continue
+    
+    # Process CSV files
+    csv_files = ['orders.csv'] if os.path.exists(os.path.join(orders_dir, 'orders.csv')) else [
+        f for f in os.listdir(orders_dir) if f.endswith('.csv')
+    ]
+    
+    for filename in csv_files:
+        filepath = os.path.join(orders_dir, filename)
+        try:
+            # Read existing CSV
+            remaining_rows = []
+            with open(filepath, 'r', newline='', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                fieldnames = reader.fieldnames
+                
+                for row in reader:
+                    order_id = (row.get("Order ID") or "").strip()
+                    item_number = (row.get("Item Number") or "").strip()
+                    key = (order_id, item_number)
+                    
+                    # Keep row if it's not in deleted keys
+                    if key not in deleted_keys:
+                        remaining_rows.append(row)
+            
+            # Write back to file
+            with open(filepath, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(remaining_rows)
+                
+        except Exception:
+            continue

@@ -86,37 +86,27 @@ class Order:
         )
 
     def to_xml_element(self) -> ET.Element:
-        """Convert Order to XML element."""
+        """Convert Order to XML element with minimal fields."""
         order_elem = ET.Element("ORDER")
         
-        fields = [
-            ("ORDERID", self.order_id),
-            ("ORDERDATE", self.order_date),
-            ("SELLER", self.seller),
-            ("ORDERTOTAL", str(self.order_total)),
-            ("BASEGRANDTOTAL", str(self.base_grand_total))
-        ]
-        
-        for tag, text in fields:
-            ET.SubElement(order_elem, tag).text = text
+        # Only include ORDERID for minimal XML
+        ET.SubElement(order_elem, "ORDERID").text = self.order_id
 
         for item in self.items:
-            item_elem = ET.SubElement(order_elem, "ITEM")
-            item_fields = [
-                ("ITEMID", item.item_id),
-                ("ITEMTYPE", item.item_type),
-                ("COLOR", str(item.color_id)),
-                ("QTY", str(item.qty)),
-                ("PRICE", str(item.price)),
-                ("CONDITION", item.condition),
-                ("DESCRIPTION", item.description),
-            ]
-            
-            for tag, text in item_fields:
-                ET.SubElement(item_elem, tag).text = text
-                
+            # Only include items that have LOTID
             if item.lot_id:
+                item_elem = ET.SubElement(order_elem, "ITEM")
+                
+                # Always include LOTID
                 ET.SubElement(item_elem, "LOTID").text = item.lot_id
+                
+                # Include COLOR if present (non-zero)
+                if item.color_id:
+                    ET.SubElement(item_elem, "COLOR").text = str(item.color_id)
+                
+                # Include DESCRIPTION (seller notes) if present
+                if item.description and item.description.strip():
+                    ET.SubElement(item_elem, "DESCRIPTION").text = item.description
 
         return order_elem
 
@@ -203,7 +193,7 @@ def _build_xml_indexes() -> Tuple[Dict[Tuple[str, str], int], Dict[Tuple[str, st
 
 
 def write_minimal_orders_xml(orders: List[Order], output_path: str) -> None:
-    """Write minimal XML with only order IDs and lot IDs."""
+    """Write minimal XML with only order IDs, lot IDs, colors, and descriptions."""
     root = ET.Element("ORDERS")
     for order in orders:
         order_elem = ET.SubElement(root, "ORDER")
@@ -212,6 +202,14 @@ def write_minimal_orders_xml(orders: List[Order], output_path: str) -> None:
             if item.lot_id:
                 item_elem = ET.SubElement(order_elem, "ITEM")
                 ET.SubElement(item_elem, "LOTID").text = item.lot_id
+                
+                # Include COLOR if present (non-zero)
+                if item.color_id:
+                    ET.SubElement(item_elem, "COLOR").text = str(item.color_id)
+                
+                # Include DESCRIPTION (seller notes) if present
+                if item.description and item.description.strip():
+                    ET.SubElement(item_elem, "DESCRIPTION").text = item.description
                 
     tree = ET.ElementTree(root)
     ET.indent(tree, space="  ", level=0)
