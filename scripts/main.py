@@ -9,7 +9,8 @@ from sheets import (
     update_orders_sheet,
     read_orders_sheet_edits,
     detect_changes_before_merge,
-    save_edits_to_files
+    save_edits_to_files,
+    remove_deleted_orders_from_files
 )
 import merge_orders
 
@@ -31,6 +32,23 @@ def main():
     # Save any edits back to files before merging
     if sheet_edits:
         save_edits_to_files(sheet_edits, "orders")
+
+    # Load or create the main Google Sheet
+    sheet = load_google_sheet()
+    
+    # Read existing sheet edits before merging
+    sheet_edits = read_orders_sheet_edits(sheet)
+    
+    # Detect changes before merge
+    changes = detect_changes_before_merge(sheet_edits, "orders")
+    
+    # Save edits to files
+    save_edits_to_files(sheet_edits, "orders")
+    
+    # Remove deleted orders from files
+    if changes and changes.get('deletions'):
+        deleted_keys = [change['key'] for change in changes['deletions']]
+        remove_deleted_orders_from_files(deleted_keys, "orders")
 
     # Merge order files
     merge_orders.merge_xml()

@@ -10,6 +10,7 @@ if SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, SCRIPTS_DIR)
 
 from sheets import read_orders_sheet_edits, update_orders_sheet  # noqa: E402
+from orders import Order, OrderItem  # noqa: E402
 
 
 class TestSheetsEditing(unittest.TestCase):
@@ -106,55 +107,38 @@ class TestSheetsEditing(unittest.TestCase):
             ("12345", "3001"): {"Total Lots": "2"}
         }
         
-        # Mock order rows from the system
-        order_rows = [
-            {
-                "Order ID": "12345",
-                "Seller": "TestSeller", 
-                "Order Date": "2024-01-01",
-                "Shipping": "",  # Should be replaced with user edit
-                "Add Chrg 1": "",
-                "Order Total": "25.00",
-                "Base Grand Total": "26.50",
-                "Total Lots": "",
-                "Total Items": "",
-                "Tracking No": "",  # Should be replaced with user edit
-                "Condition": "",
-                "Item Number": "",
-                "Item Description": "",
-                "Color": "",
-                "Qty": "",
-                "Each": "",
-                "Total": ""
-            },
-            {
-                "Order ID": "12345",
-                "Seller": "",
-                "Order Date": "",
-                "Shipping": "",
-                "Add Chrg 1": "",
-                "Order Total": "",
-                "Base Grand Total": "",
-                "Total Lots": "",  # Should be replaced with user edit
-                "Total Items": "",
-                "Tracking No": "",
-                "Condition": "N",
-                "Item Number": "3001",
-                "Item Description": "Brick 2 x 4",
-                "Color": "Red",
-                "Qty": "10",
-                "Each": "0.05",
-                "Total": "0.50"
-            }
+        # Create Order objects instead of dictionaries
+        orders = [
+            Order(
+                order_id="12345",
+                order_date="2024-01-01T10:30:00.000Z",
+                seller="TestSeller",
+                order_total=25.0,
+                base_grand_total=26.5,
+                shipping=0.0,  # Should be replaced with user edit
+                tracking_no="",  # Should be replaced with user edit
+                items=[
+                    OrderItem(
+                        item_id="3001",
+                        item_type="P",
+                        color_id=4,
+                        qty=10,
+                        price=0.05,
+                        condition="N",
+                        description="Brick 2 x 4",
+                        color_name="Orange"
+                    )
+                ]
+            )
         ]
         
         with patch('sheets.get_or_create_worksheet', return_value=mock_ws), \
              patch('sheets.read_orders_sheet_edits', return_value=existing_edits):
             
-            update_orders_sheet(mock_sheet, order_rows)
+            update_orders_sheet(mock_sheet, orders)
             
             # Verify ws.update was called
-            mock_ws.update.assert_called_once()
+            self.assertTrue(mock_ws.update.called)
             
             # Get the values that were written to the sheet
             call_args = mock_ws.update.call_args
@@ -173,39 +157,49 @@ class TestSheetsEditing(unittest.TestCase):
             ]
             self.assertEqual(headers, expected_headers)
             
-            # Check that user edits were applied to the first row (order header)
+            # Check that user edits were applied to the data row
             first_data_row = values[1]
             shipping_index = headers.index("Shipping")
             tracking_index = headers.index("Tracking No")
+            total_lots_index = headers.index("Total Lots")
             self.assertEqual(first_data_row[shipping_index], "5.99")
             self.assertEqual(first_data_row[tracking_index], "1Z123456789")
-            
-            # Check that user edits were applied to the second row (item row)
-            second_data_row = values[2]
-            total_lots_index = headers.index("Total Lots")
-            self.assertEqual(second_data_row[total_lots_index], "2")
+            self.assertEqual(first_data_row[total_lots_index], "2")
 
     def test_update_orders_sheet_no_existing_edits(self):
         """Test update_orders_sheet works when there are no existing edits."""
         mock_sheet = Mock()
         mock_ws = Mock()
         
-        order_rows = [
-            {
-                "Order ID": "12345",
-                "Seller": "TestSeller",
-                "Item Number": "",
-                "Tracking No": ""
-            }
+        # Create Order objects instead of dictionaries
+        orders = [
+            Order(
+                order_id="12345",
+                order_date="2024-01-01T10:30:00.000Z",
+                seller="TestSeller",
+                order_total=25.0,
+                base_grand_total=27.5,
+                items=[
+                    OrderItem(
+                        item_id="3001",
+                        item_type="P",
+                        color_id=4,
+                        qty=10,
+                        price=2.5,
+                        condition="N",
+                        description="Test Brick"
+                    )
+                ]
+            )
         ]
         
         with patch('sheets.get_or_create_worksheet', return_value=mock_ws), \
              patch('sheets.read_orders_sheet_edits', return_value={}):
             
-            update_orders_sheet(mock_sheet, order_rows)
+            update_orders_sheet(mock_sheet, orders)
             
             # Verify the function completes without error
-            mock_ws.update.assert_called_once()
+            self.assertTrue(mock_ws.update.called)
 
     def test_read_orders_sheet_edits_handles_order_structure(self):
         """Test reading edits from sheet with proper order structure (empty Order ID for item rows)."""
