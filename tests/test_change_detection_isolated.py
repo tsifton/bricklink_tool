@@ -99,16 +99,17 @@ class TestChangeDetectionIsolated(unittest.TestCase):
             }
         }
         
-        with patch('sheets.load_orders') as mock_load:
-            mock_load.return_value = (None, mock_order_rows)
-            
-            from sheets import detect_changes_before_merge
-            changes = detect_changes_before_merge(sheet_edits, self.orders_dir)
-            
-            # Should detect no changes
-            self.assertEqual(len(changes['edits']), 0)
-            self.assertEqual(len(changes['additions']), 0)
-            self.assertEqual(len(changes['deletions']), 0)
+        # Create test XML file that matches the sheet edits
+        self.create_test_xml("orders.xml", order_id="12345", seller="TestSeller", 
+                           order_date="2024-01-01T10:30:00.000Z", item_id="3001", qty=10, price=2.5)
+        
+        from sheets import detect_changes_before_merge
+        changes = detect_changes_before_merge(sheet_edits, self.orders_dir)
+        
+        # Should detect no changes
+        self.assertEqual(len(changes['edits']), 0)
+        self.assertEqual(len(changes['additions']), 0)
+        self.assertEqual(len(changes['deletions']), 0)
     
     @patch('sheets.gspread', MagicMock())  # Mock gspread to avoid import error
     def test_detect_changes_with_edits(self):
@@ -156,21 +157,22 @@ class TestChangeDetectionIsolated(unittest.TestCase):
             }
         }
         
-        with patch('sheets.load_orders') as mock_load:
-            mock_load.return_value = (None, mock_order_rows)
-            
-            from sheets import detect_changes_before_merge
-            changes = detect_changes_before_merge(sheet_edits, self.orders_dir)
-            
-            # Should detect edits
-            self.assertEqual(len(changes['edits']), 2)  # Both order and item rows changed
-            self.assertEqual(len(changes['additions']), 0)
-            self.assertEqual(len(changes['deletions']), 0)
-            
-            # Check specific edits
-            edit_keys = [edit['key'] for edit in changes['edits']]
-            self.assertIn(("12345", ""), edit_keys)
-            self.assertIn(("12345", "3001"), edit_keys)
+        # Create test XML file with edits to detect
+        self.create_test_xml("orders.xml", order_id="12345", seller="TestSeller", 
+                           order_date="2024-01-01T10:30:00.000Z", item_id="3001", qty=10, price=2.5)
+        
+        from sheets import detect_changes_before_merge
+        changes = detect_changes_before_merge(sheet_edits, self.orders_dir)
+        
+        # Should detect edits
+        self.assertEqual(len(changes['edits']), 2)  # Both order and item rows changed
+        self.assertEqual(len(changes['additions']), 0)
+        self.assertEqual(len(changes['deletions']), 0)
+        
+        # Check specific edits
+        edit_keys = [edit['key'] for edit in changes['edits']]
+        self.assertIn(("12345", ""), edit_keys)
+        self.assertIn(("12345", "3001"), edit_keys)
     
     @patch('sheets.gspread', MagicMock())  # Mock gspread to avoid import error  
     def test_detect_changes_with_deletions(self):
@@ -229,34 +231,64 @@ class TestChangeDetectionIsolated(unittest.TestCase):
             # Missing ("12345", "3002") - should be detected as deletion
         }
         
-        with patch('sheets.load_orders') as mock_load:
-            mock_load.return_value = (None, mock_order_rows)
-            
-            from sheets import detect_changes_before_merge
-            changes = detect_changes_before_merge(sheet_edits, self.orders_dir)
-            
-            # Should detect deletion
-            self.assertEqual(len(changes['edits']), 0)
-            self.assertEqual(len(changes['additions']), 0)
-            self.assertEqual(len(changes['deletions']), 1)
-            
-            # Check the deletion
-            self.assertEqual(changes['deletions'][0]['key'], ("12345", "3002"))
-            self.assertEqual(changes['deletions'][0]['order_id'], "12345")
-            self.assertEqual(changes['deletions'][0]['item_number'], "3002")
+        # Create test XML with multiple items
+        import xml.etree.ElementTree as ET
+        xml_content = '''<?xml version="1.0" encoding="UTF-8"?>
+<ORDERS>
+  <ORDER>
+    <ORDERID>12345</ORDERID>
+    <ORDERDATE>2024-01-01T10:30:00.000Z</ORDERDATE>
+    <SELLER>TestSeller</SELLER>
+    <ORDERTOTAL>50.0</ORDERTOTAL>
+    <BASEGRANDTOTAL>52.5</BASEGRANDTOTAL>
+    <ITEM>
+      <ITEMID>3001</ITEMID>
+      <ITEMTYPE>P</ITEMTYPE>
+      <COLOR>4</COLOR>
+      <QTY>10</QTY>
+      <PRICE>2.5</PRICE>
+      <CONDITION>N</CONDITION>
+      <DESCRIPTION>Test Brick 1</DESCRIPTION>
+      <LOTID>LOT12345_3001</LOTID>
+    </ITEM>
+    <ITEM>
+      <ITEMID>3002</ITEMID>
+      <ITEMTYPE>P</ITEMTYPE>
+      <COLOR>2</COLOR>
+      <QTY>10</QTY>
+      <PRICE>2.5</PRICE>
+      <CONDITION>N</CONDITION>
+      <DESCRIPTION>Test Brick 2</DESCRIPTION>
+      <LOTID>LOT12345_3002</LOTID>
+    </ITEM>
+  </ORDER>
+</ORDERS>'''
+        
+        with open(os.path.join(self.orders_dir, 'orders.xml'), 'w', encoding='utf-8') as f:
+            f.write(xml_content)
+        
+        from sheets import detect_changes_before_merge
+        changes = detect_changes_before_merge(sheet_edits, self.orders_dir)
+        
+        # Should detect deletion
+        self.assertEqual(len(changes['edits']), 0)
+        self.assertEqual(len(changes['additions']), 0)
+        self.assertEqual(len(changes['deletions']), 1)
+        
+        # Check the deletion
+        self.assertEqual(changes['deletions'][0]['key'], ("12345", "3002"))
+        self.assertEqual(changes['deletions'][0]['order_id'], "12345")
+        self.assertEqual(changes['deletions'][0]['item_number'], "3002")
     
     @patch('sheets.gspread', MagicMock())  # Mock gspread to avoid import error
     def test_detect_changes_empty_sheet_edits(self):
         """Test that empty sheet edits returns empty changes."""
-        with patch('sheets.load_orders') as mock_load:
-            mock_load.return_value = (None, [])
-            
-            from sheets import detect_changes_before_merge
-            changes = detect_changes_before_merge({}, self.orders_dir)
-            
-            self.assertEqual(len(changes['edits']), 0) 
-            self.assertEqual(len(changes['additions']), 0)
-            self.assertEqual(len(changes['deletions']), 0)
+        from sheets import detect_changes_before_merge
+        changes = detect_changes_before_merge({}, self.orders_dir)
+        
+        self.assertEqual(len(changes['edits']), 0) 
+        self.assertEqual(len(changes['additions']), 0)
+        self.assertEqual(len(changes['deletions']), 0)
 
 
 if __name__ == '__main__':
