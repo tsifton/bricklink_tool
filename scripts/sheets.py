@@ -249,11 +249,9 @@ def update_orders_sheet(sheet, orders) -> None:
 
     values = [ORDERS_HEADERS] + data_rows
     ws.update(values=values, range_name="A1")
-    _format_currency_columns(ws, ORDERS_HEADERS, 
-                           ["Shipping", "Add Chrg 1", "Order Total", "Base Grand Total", "Each", "Total"], 
-                           len(values))
+    _format_currency_columns(ws, ORDERS_HEADERS, ["Shipping", "Add Chrg 1", "Order Total", "Base Grand Total", "Each", "Total"], len(values))
 
-
+    
 def detect_changes_before_merge(sheet_edits: Optional[Dict[tuple, Dict[str, Any]]], orders_dir: str) -> Dict[str, List[Dict[str, Any]]]:
     """Detect changes between sheet edits and existing order files before merging."""
     if not sheet_edits:

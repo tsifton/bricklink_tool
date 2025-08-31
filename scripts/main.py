@@ -19,6 +19,19 @@ def main():
     Main entry point for the Minifig Profit Tool.
     Loads data, computes buildable quantities, and updates Google Sheets.
     """
+    
+    # Load or create the main Google Sheet first
+    sheet = load_google_sheet()
+    
+    # Read current sheet edits before merging new orders
+    sheet_edits = read_orders_sheet_edits(sheet)
+    
+    # Detect changes between sheet and existing files
+    changes = detect_changes_before_merge(sheet_edits, "orders")
+    
+    # Save any edits back to files before merging
+    if sheet_edits:
+        save_edits_to_files(sheet_edits, "orders")
 
     # Load or create the main Google Sheet
     sheet = load_google_sheet()
